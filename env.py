@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -80,6 +80,10 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         self.leader_x = self.leader_trajectory.get_leader_trajectory()
         self.x = np.tile(np.array([[0], [0]]), (self.n, 1))
 
+        # create lists to store fuel and tracking costs seperately
+        self.cost_tracking_list: list[float] = []
+        self.cost_fuel_list: list[float] = []
+
         np.random.seed(seed)
         # create once 100 random starting states
         starting_velocities = [
@@ -127,7 +131,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
     def get_stage_cost(
         self, state: npt.NDArray[np.floating], action: npt.NDArray[np.floating], gear: npt.NDArray[np.integer]
-    ) -> float:
+    ) -> Tuple[float, float, float]:
         """Computes the tracking stage cost."""
         if (
             self.previous_action is None
@@ -139,21 +143,21 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         u = np.split(action, self.n, axis=0)
         u_p = np.split(self.previous_action, self.n, axis=0)
 
-        cost = 0
+        cost_tracking = 0
         cost_fuel = 0
         # tracking cost
         if not self.real_vehicle_as_reference:
-            cost += self.cost_func(
+            cost_tracking += self.cost_func(
                 x[self.leader_index] - self.leader_x[:, [self.step_counter]], self.Q_x
             )  # first vehicle tracking leader trajectory
         else:
-            cost += self.cost_func(
+            cost_tracking += self.cost_func(
                 x[0]
                 - self.leader_x[:, [self.step_counter]]
                 - (self.spacing_policy.spacing(x[0])),
                 self.Q_x,
             )
-        cost += sum(
+        cost_tracking += sum(
             [
                 self.cost_func(
                     x[i] - x[i - 1] - (self.spacing_policy.spacing(x[i])),
@@ -163,9 +167,9 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
             ]
         )
         # control effort cost
-        cost += sum([self.cost_func(u[i], self.Q_u) for i in range(self.n)])
+        cost_tracking += sum([self.cost_func(u[i], self.Q_u) for i in range(self.n)])
         # control variation cost
-        cost += sum([self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)])
+        cost_tracking += sum([self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)])
 
         # fuel consumption cost
         vehicles = self.platoon.get_vehicles()
@@ -199,8 +203,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
                 + coefficients_c[2] * x[i][1] ** 2
             )
             cost_fuel += sum([self.fuel_penalize * (poly_b + poly_c * acc)])
-            cost += sum([self.fuel_penalize * (poly_b + poly_c * acc)])
-
+            total_cost = cost_fuel + cost_tracking
         # check for constraint violations
         if (
             self.real_vehicle_as_reference
@@ -214,7 +217,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         self.previous_action = action
         self.previous_state = state
-        return cost
+        return total_cost, cost_tracking, cost_fuel
 
     def step(
         self, action: np.ndarray
@@ -240,13 +243,15 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
                     i, self.x[2 * i + 1, 0]
                 )
 
-        r = self.get_stage_cost(self.x, u, j)
+        r_total, r_tracking, r_fuel = self.get_stage_cost(self.x, u, j)
+        self.cost_tracking_list.append(r_tracking)
+        self.cost_fuel_list.append(r_fuel)
         x_new = self.platoon.step_platoon(self.x, u, j, self.ts)
         self.x = x_new
 
         self.step_counter += 1
         print(f"step {self.step_counter}")
-        return x_new, r, False, False, {}
+        return x_new, r_total, False, False, {}
 
     def get_state(self):
         return self.x

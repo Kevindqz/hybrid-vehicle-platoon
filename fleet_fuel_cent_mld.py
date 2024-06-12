@@ -375,11 +375,16 @@ def simulate(
     if len(env.observations) > 0:
         X = env.observations[0].squeeze()
         U = env.actions[0].squeeze()
-        R = env.rewards[0]
+        R = env.rewards[0]  # grabs only total cost
     else:
         X = np.squeeze(env.ep_observations)
         U = np.squeeze(env.ep_actions)
         R = np.squeeze(env.ep_rewards)
+
+    # now grab individual costs
+    r_tracking = env.unwrapped.cost_tracking_list
+    r_fuels = env.unwrapped.cost_fuel_list
+    
 
     print(f"Return = {sum(R.squeeze())}")
     print(f"Violations = {env.unwrapped.viol_counter}")
