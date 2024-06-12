@@ -157,7 +157,7 @@ class Vehicle:
             "F": F,
             "G": G,
         }
-    
+
     def get_gear_from_velocity(self, v: float):
         """Get a gear j that is valid for the velocity v."""
         if v < self.v_min or v > self.v_max:
@@ -172,6 +172,22 @@ class Vehicle:
             if v > self.vl[i] and v < self.vh[i]:  # return first valid gear found
                 return i + 1
         raise ValueError(f"No gear found for velocity {v}")
+
+    def get_traction_from_gear(self, j: int) -> float:
+        """Get the constant traction force for a given gear.
+        Parameters
+        ----------
+        j : int
+        Gear number.
+        Returns
+        -------
+        float
+        Traction force for gear j.
+
+        """
+        if j < 1 or j > 6:
+            raise ValueError(f"{j} is not a valid gear.")
+        return self.b[j - 1]
 
     def get_u_for_constant_vel(self, v: float, j: int):
         """Get the control input which will keep the velocity v constant with gear j, as by the nonlinear cont time dynamics."""
@@ -193,7 +209,7 @@ class Vehicle:
         elif v < self.vl[j] or v > self.vh[j]:
             raise ValueError(f"Velocity {v} is not valid for gear {j+1}")
 
-        return (self.c_fric*v*v + self.mu*self.m*self.grav)/(self.b[j])
+        return (self.c_fric * v * v + self.mu * self.m * self.grav) / (self.b[j])
 
 
 class Platoon:
@@ -218,6 +234,7 @@ class Platoon:
         else:
             raise ValueError(f"{vehicle_type} is not a valid vehicle type.")
 
+        self.vehicle_class = vehicle_class
         self.n = n  # number of vehicles in platoon
         self.vehicles: list[Vehicle] = []
         if masses is not None:
@@ -263,6 +280,10 @@ class Platoon:
                 f"Gear from velocity asked but the given vehicle {i} is not a PWA vehicle."
             )
         return self.vehicles[i].get_gear_from_velocity(v)
+
+    def get_traction_from_vehicle_gear(self, i: int, j: int):
+        """Get the traction force for a given vehicle and gear."""
+        return self.vehicles[i].get_traction_from_gear(j)
 
     def get_vehicle_system_dicts(self, ts: float) -> list[dict]:
         """Get the dictionary representation of the PWA system for each vehicle."""

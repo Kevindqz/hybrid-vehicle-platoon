@@ -26,11 +26,14 @@ class Params:
 class Sim:
     open_loop = False
     real_vehicle_as_reference = False
-    vehicle_model_type: Literal["nonlinear", "pwa_friction", "pwa_gear"] = "pwa_gear"   # MLD form (model II) is pwa_friction
+    vehicle_model_type: Literal[
+        "nonlinear", "pwa_friction", "pwa_gear"
+    ] = "pwa_friction"  # MLD form (model II) is pwa_friction
     start_from_platoon: bool = False
     quadratic_cost: bool = True
-    n = 1
-    N = 3
+    fuel_penalize: float = 0.5
+    n = 2
+    N = 5
     ep_len = N if open_loop else 150
     spacing_policy = ConstantSpacingPolicy(50)
     leader_trajectory = ConstantVelocityLeaderTrajectory(
@@ -52,7 +55,9 @@ class Sim_n_task_1(Sim):
 
 
 class Sim_n_task_2(Sim):
-    def __init__(self, n: int, seed: int, leader_index: int | None = None, N: int = 6) -> None:
+    def __init__(
+        self, n: int, seed: int, leader_index: int | None = None, N: int = 6
+    ) -> None:
         super().__init__()
         self.n = n
         self.N = N

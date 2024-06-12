@@ -39,7 +39,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         start_from_platoon: bool = False,
         quadratic_cost: bool = True,
         real_vehicle_as_reference: bool = False,
-        penalize_fuel: bool = False,
+        fuel_penalize: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -53,6 +53,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         self.leader_trajectory = leader_trajectory
         self.spacing_policy = spacing_policy
         self.real_vehicle_as_reference = real_vehicle_as_reference
+        self.fuel_penalize = fuel_penalize
         if quadratic_cost:
             self.cost_func = self.quad_cost
         else:
@@ -125,7 +126,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         return np.linalg.norm(Q @ x, ord=1)
 
     def get_stage_cost(
-        self, state: npt.NDArray[np.floating], action: npt.NDArray[np.floating]
+        self, state: npt.NDArray[np.floating], action: npt.NDArray[np.floating], gear: npt.NDArray[np.integer]
     ) -> float:
         """Computes the tracking stage cost."""
         if (
@@ -139,6 +140,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         u_p = np.split(self.previous_action, self.n, axis=0)
 
         cost = 0
+        cost_fuel = 0
         # tracking cost
         if not self.real_vehicle_as_reference:
             cost += self.cost_func(
@@ -164,6 +166,40 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         cost += sum([self.cost_func(u[i], self.Q_u) for i in range(self.n)])
         # control variation cost
         cost += sum([self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)])
+
+        # fuel consumption cost
+        vehicles = self.platoon.get_vehicles()
+        coefficients_b = [
+            0.1569,
+            2.450 * 10 ** (-2),
+            -7.415 * 10 ** (-4),
+            5.975 * 10 ** (-5),
+        ]
+        coefficients_c = [0.0724, 9.681 * 10 ** (-2), 1.075 * 10 ** (-3)]
+        for i in range(self.n):
+            acc: float = 0
+
+            # gear = self.platoon.get_gear_from_vehicle_velocity(i, x[i][1])
+            traction = self.platoon.get_traction_from_vehicle_gear(i, int(gear[i][0]))
+            acc = (
+            -vehicles[i].c_fric * x[i][1] ** 2 / vehicles[i].m
+            - vehicles[i].mu * vehicles[i].grav
+            + traction * u[i][0]
+            )
+
+            poly_b = (
+                coefficients_b[0]
+                + coefficients_b[1] * x[i][1]
+                + coefficients_b[2] * x[i][1] ** 2
+                + coefficients_b[3] * x[i][1] ** 3
+            )
+            poly_c = (
+                coefficients_c[0]
+                + coefficients_c[1] * x[i][1]
+                + coefficients_c[2] * x[i][1] ** 2
+            )
+            cost_fuel += sum([self.fuel_penalize * (poly_b + poly_c * acc)])
+            cost += sum([self.fuel_penalize * (poly_b + poly_c * acc)])
 
         # check for constraint violations
         if (
@@ -204,7 +240,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
                     i, self.x[2 * i + 1, 0]
                 )
 
-        r = self.get_stage_cost(self.x, u)
+        r = self.get_stage_cost(self.x, u, j)
         x_new = self.platoon.step_platoon(self.x, u, j, self.ts)
         self.x = x_new
 

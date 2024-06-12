@@ -20,7 +20,6 @@ np.random.seed(2)
 
 
 class LocalMpc(MpcSwitching):
-
     Q_x = Params.Q_x
     Q_u = Params.Q_u
     Q_du = Params.Q_du

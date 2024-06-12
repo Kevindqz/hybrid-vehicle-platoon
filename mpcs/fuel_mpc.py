@@ -3,7 +3,8 @@ from dmpcpwa.mpc.mpc_mld_cent_decup import MpcMldCentDecup
 
 from misc.common_controller_params import Params
 from misc.spacing_policy import ConstantSpacingPolicy, SpacingPolicy
-from models import Vehicle
+from models import Vehicle, Platoon
+import numpy as np
 
 
 class FuelMpcCent(MpcMldCentDecup):
@@ -22,6 +23,7 @@ class FuelMpcCent(MpcMldCentDecup):
         self,
         n: int,
         N: int,
+        platoon: Platoon,
         pwa_systems: list[dict],
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
         leader_index: int = 0,
@@ -29,6 +31,7 @@ class FuelMpcCent(MpcMldCentDecup):
         thread_limit: int | None = None,
         accel_cnstr_tightening: float = 0.0,
         real_vehicle_as_reference: bool = False,
+        fuel_penalize: float = 0.0,
     ) -> None:
         super().__init__(
             pwa_systems, n, N, thread_limit=thread_limit, constrain_first_state=False
@@ -38,21 +41,27 @@ class FuelMpcCent(MpcMldCentDecup):
 
         self.setup_cost_and_constraints(
             self.u,
+            platoon,
+            pwa_systems,
             spacing_policy,
             leader_index,
             quadratic_cost,
             accel_cnstr_tightening,
             real_vehicle_as_reference,
+            fuel_penalize,
         )
 
     def setup_cost_and_constraints(
         self,
         u,
+        platoon: Platoon,
+        pwa_systems: list[dict],
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
         leader_index: int = 0,
         quadratic_cost: bool = True,
         accel_cnstr_tightening: float = 0.0,
         real_vehicle_as_reference: bool = False,
+        fuel_penalize: float = 0.0,
     ):
         """Set up  cost and constraints for platoon tracking. Penalises the u passed in."""
         if quadratic_cost:
@@ -68,10 +77,6 @@ class FuelMpcCent(MpcMldCentDecup):
         nx_l = Vehicle.nx_l
         nu_l = Vehicle.nu_l
 
-        # creating full variables and constraints
-        P = self.mpc_model.addMVar((self.n, self.N + 1), lb=..., ub=..., name='Power')
-        self.mpc_model.addConstr(P == 0, name='power constraint')
-
         # slack vars for soft constraints
         self.s = self.mpc_model.addMVar(
             (self.n, self.N + 1), lb=0, ub=float("inf"), name="s"
@@ -85,6 +90,72 @@ class FuelMpcCent(MpcMldCentDecup):
         cost = 0
         x_l = [self.x[i * nx_l : (i + 1) * nx_l, :] for i in range(self.n)]
         u_l = [u[i * nu_l : (i + 1) * nu_l, :] for i in range(self.n)]
+
+        # creating fuel variables and constraints
+
+        # calculate acceleration using dynamics
+        b = self.mpc_model.addMVar(
+            (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="b"
+        )
+
+        self.mpc_model.addConstrs(
+            (
+                b[i, k]
+                == sum(
+                    (
+                        self.delta[i][j][k] * pwa_systems[i]["B"][j][1]
+                        for j in range(len(pwa_systems[i]["B"]))
+                    )
+                )
+                for i in range(self.n)
+                for k in range(self.N)
+            ),
+            name="b",
+        )
+
+        acc = self.mpc_model.addMVar(
+            (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="Acc"
+        )
+        vehicles = platoon.vehicles
+        self.mpc_model.addConstrs(
+            acc[i, k]
+            == -vehicles[i].c_fric * x_l[i][1, k] ** 2 / vehicles[i].m
+            - vehicles[i].mu * vehicles[i].grav
+            + b[i, k] * u_l[i][0, k] / vehicles[i].m
+            for i in range(self.n)
+            for k in range(self.N)
+        )
+
+        coefficients_b = [
+            5.975 * 10 ** (-5),
+            -7.415 * 10 ** (-4),
+            2.450 * 10 ** (-2),
+            0.1569,
+        ]
+        coefficients_c = [1.075 * 10 ** (-3), 9.681 * 10 ** (-2), 0.0724]
+        f = self.mpc_model.addMVar(
+            (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="Fuel"
+        )
+        x_l2 = self.mpc_model.addMVar(
+            (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="x_l2"
+        )
+        for i in range(self.n):
+            for k in range(self.N):
+                poly_b = (
+                    coefficients_b[0]
+                    + coefficients_b[1] * x_l[i][1, k]
+                    + coefficients_b[2] * x_l2[i, k]
+                    + coefficients_b[3] * x_l2[i, k] * x_l[i][1, k]
+                )
+                poly_c = (
+                    coefficients_c[0]
+                    + coefficients_c[1] * x_l[i][1, k]
+                    + coefficients_c[2] * x_l2[i, k]
+                )
+
+                self.mpc_model.addConstr(x_l2[i, k] == x_l[i][1, k] ** 2)
+                self.mpc_model.addConstr(f[i, k] == poly_b + poly_c * acc[i, k])
+
         # tracking cost
         if not real_vehicle_as_reference:
             cost += sum(
@@ -142,7 +213,7 @@ class FuelMpcCent(MpcMldCentDecup):
 
         # add fuel consumption cost
         cost += sum(
-            [P[0, k] for i in range(self.n) for k in range(self.N + 1)]
+            fuel_penalize * f[i, k] for i in range(self.n) for k in range(self.N)
         )
 
         self.mpc_model.setObjective(cost, gp.GRB.MINIMIZE)
