@@ -7,7 +7,7 @@ plt.style.use("bmh")
 nx_l = 2
 
 
-def plot_fleet(n, X, U, R, leader_state, violations=None):
+def plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_state, violations=None):
     _, axs = plt.subplots(2, 1, constrained_layout=True, sharex=True)
     axs[0].plot(leader_state[0, :], "--")
     axs[1].plot(leader_state[1, :], "--")
@@ -20,8 +20,33 @@ def plot_fleet(n, X, U, R, leader_state, violations=None):
     axs[0].legend(["reference"])
     # if violations is not None:
     #    axs[0].plot(violations)
+ 
+    # plot acceleration
+    # _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    # axs.plot(acc)
+    # axs.set_ylabel("acceleration")
+    # axs.set_xlabel(f"time step k")
+    
+    # plot control input and total cost
     _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
     axs.plot(U)
+    axs.set_ylabel("control input")
+    axs.set_xlabel(f"time step k")
+
     _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
     axs.plot(R.squeeze())
+    axs.set_ylabel("total cost")
+    axs.set_xlabel(f"time step k")
+
+    # plot tracking and fuel cost individually
+    _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    axs.plot(r_tracking)
+    axs.set_ylabel("tracking cost")
+    axs.set_xlabel(f"time step k")
+
+    _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    axs.plot(r_fuel)
+    axs.set_ylabel("fuel cost")
+    axs.set_xlabel(f"time step k")
+
     plt.show()

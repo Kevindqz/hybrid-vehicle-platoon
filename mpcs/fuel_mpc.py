@@ -126,13 +126,18 @@ class FuelMpcCent(MpcMldCentDecup):
             for k in range(self.N)
         )
 
+        acc_abs = self.mpc_model.addMVar((self.n, self.N), lb=0, ub=float("inf"), name="Acc_abs")
+        self.mpc_model.addConstrs(acc_abs[i, k] >= acc[i, k] for i in range(self.n) for k in range(self.N))
+        self.mpc_model.addConstrs(acc_abs[i, k] >= -acc[i, k] for i in range(self.n) for k in range(self.N))
+
         coefficients_b = [
-            5.975 * 10 ** (-5),
-            -7.415 * 10 ** (-4),
-            2.450 * 10 ** (-2),
             0.1569,
+            2.450 * 10 ** (-2),
+            -7.415 * 10 ** (-4),
+            5.975 * 10 ** (-5),
         ]
-        coefficients_c = [1.075 * 10 ** (-3), 9.681 * 10 ** (-2), 0.0724]
+
+        coefficients_c = [0.0724, 9.681 * 10 ** (-2) , 1.075 * 10 ** (-3)]
         f = self.mpc_model.addMVar(
             (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="Fuel"
         )
@@ -155,7 +160,7 @@ class FuelMpcCent(MpcMldCentDecup):
 
                 self.mpc_model.addConstr(x_l2[i, k] == x_l[i][1, k] ** 2)
                 self.mpc_model.addConstr(f[i, k] == poly_b + poly_c * acc[i, k])
-
+                
         # tracking cost
         if not real_vehicle_as_reference:
             cost += sum(

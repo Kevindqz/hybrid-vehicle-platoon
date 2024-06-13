@@ -83,7 +83,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         # create lists to store fuel and tracking costs seperately
         self.cost_tracking_list: list[float] = []
         self.cost_fuel_list: list[float] = []
-
+        self.acc_list: list[float] = []
         np.random.seed(seed)
         # create once 100 random starting states
         starting_velocities = [
@@ -188,8 +188,9 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
             acc = (
             -vehicles[i].c_fric * x[i][1] ** 2 / vehicles[i].m
             - vehicles[i].mu * vehicles[i].grav
-            + traction * u[i][0]
+            + traction * u[i][0]/vehicles[i].m
             )
+            self.acc_list.append(acc)
 
             poly_b = (
                 coefficients_b[0]
@@ -202,7 +203,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
                 + coefficients_c[1] * x[i][1]
                 + coefficients_c[2] * x[i][1] ** 2
             )
-            cost_fuel += sum([self.fuel_penalize * (poly_b + poly_c * acc)])
+            cost_fuel += sum(poly_b + poly_c * acc)
             total_cost = cost_fuel + cost_tracking
         # check for constraint violations
         if (

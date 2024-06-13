@@ -35,7 +35,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         thread_limit: int | None = None,
         accel_cnstr_tightening: float = 0.0,
         real_vehicle_as_reference: bool = False,
-        fuel_penalize: bool = False,
+        fuel_penalize: float = 0.0,
     ) -> None:
         self.n = n
         MpcMldCentDecup.__init__(
@@ -63,7 +63,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
                                    quadratic_cost: bool = True,
                                    accel_cnstr_tightening: float = 0,
                                    real_vehicle_as_reference: bool = False,
-                                   fuel_penalize: bool = False):
+                                   fuel_penalize: float = 0.0):
         # overriding the method fuelMPCGear because for discrete input model delta don't exist.
         """Set up  cost and constraints for platoon tracking. Penalises the u passed in."""
         if quadratic_cost:
@@ -107,13 +107,18 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             for k in range(self.N)
         )
 
+        acc_abs = self.mpc_model.addMVar((self.n, self.N), lb=0, ub=float("inf"), name="Acc_abs")
+        self.mpc_model.addConstrs(acc_abs[i, k] >= acc[i, k] for i in range(self.n) for k in range(self.N))
+        self.mpc_model.addConstrs(acc_abs[i, k] >= -acc[i, k] for i in range(self.n) for k in range(self.N))
+
         coefficients_b = [
-            5.975 * 10 ** (-5),
-            -7.415 * 10 ** (-4),
-            2.450 * 10 ** (-2),
             0.1569,
+            2.450 * 10 ** (-2),
+            -7.415 * 10 ** (-4),
+            5.975 * 10 ** (-5),
         ]
-        coefficients_c = [1.075 * 10 ** (-3), 9.681 * 10 ** (-2), 0.0724]
+
+        coefficients_c = [0.0724, 9.681 * 10 ** (-2) , 1.075 * 10 ** (-3)]
         f = self.mpc_model.addMVar(
             (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="Fuel"
         )
@@ -135,7 +140,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
                 )
 
                 self.mpc_model.addConstr(x_l2[i, k] == x_l[i][1, k] ** 2)
-                self.mpc_model.addConstr(f[i, k] == poly_b + poly_c * acc[i, k])
+                self.mpc_model.addConstr(f[i, k] == poly_b + poly_c *acc_abs[i, k])
 
         # tracking cost
         if not real_vehicle_as_reference:
@@ -352,6 +357,7 @@ def simulate(
             thread_limit=thread_limit,
             real_vehicle_as_reference=sim.real_vehicle_as_reference,
             quadratic_cost=sim.quadratic_cost,
+            fuel_penalize=sim.fuel_penalize,
         )
     elif sim.vehicle_model_type == "nonlinear":
         mpc = MpcNonlinearGearCent(
@@ -383,8 +389,11 @@ def simulate(
 
     # now grab individual costs
     r_tracking = env.unwrapped.cost_tracking_list
-    r_fuels = env.unwrapped.cost_fuel_list
-    
+    r_fuel = env.unwrapped.cost_fuel_list
+    acc = env.unwrapped.acc_list
+    r_tracking = np.array(r_tracking).squeeze()
+    r_fuel = np.array(r_fuel).squeeze()
+    acc = np.array(acc).squeeze()
 
     print(f"Return = {sum(R.squeeze())}")
     print(f"Violations = {env.unwrapped.viol_counter}")
@@ -392,7 +401,7 @@ def simulate(
     print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
 
     if plot:
-        plot_fleet(n, X, U, R, leader_x, violations=env.unwrapped.viol_counter[0])
+        plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_x, violations=env.unwrapped.viol_counter[0])
 
     if save:
         with open(
