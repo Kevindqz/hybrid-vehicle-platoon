@@ -10,10 +10,10 @@ from mpcrl.wrappers.envs import MonitorEpisodes
 from scipy.linalg import block_diag
 
 from env import PlatoonEnv
-from misc.common_controller_params import Params, Sim
+from misc.common_controller_params import Params, Sim, Sim_n_task_2
 from misc.spacing_policy import ConstantSpacingPolicy, SpacingPolicy
 from models import Platoon, Vehicle
-from mpcs.mpc_gear import MpcGear
+from mpcs.mpc_gear import MpcGear, MpcNonlinearGear
 from plot_fleet import plot_fleet
 
 np.random.seed(2)
@@ -39,10 +39,11 @@ class LocalMpc(MpcMldCentDecup):
     def __init__(
         self,
         N: int,
-        pwa_systems: list[dict],
+        systems: list[dict],
         num_vehicles_in_front: int,
         num_vehicles_behind: int,
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
+        rel_leader_index: int | None = None,
         quadratic_cost: bool = True,
         thread_limit: int | None = None,
         accel_cnstr_tightening: float = 0.0,
@@ -50,19 +51,20 @@ class LocalMpc(MpcMldCentDecup):
         """Initialize the local MPC. This MPC optimizes also considering neighboring vehicles.
         The number of neighboring vehicles is passed in through num_vehicles_in_front/num_vehicles_behind.
         """
-        self.n = len(pwa_systems)
+        self.n = len(systems)
         super().__init__(
-            pwa_systems,
+            systems,
             self.n,
             N,
             thread_limit=thread_limit,
-            constrain_first_state=False
+            constrain_first_state=False,
         )
         self.setup_cost_and_constraints(
             self.u,
             num_vehicles_in_front,
             num_vehicles_behind,
             spacing_policy,
+            rel_leader_index,
             quadratic_cost,
             accel_cnstr_tightening,
         )
@@ -73,6 +75,7 @@ class LocalMpc(MpcMldCentDecup):
         num_vehicles_in_front: int,
         num_vehicles_behind: int,
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
+        rel_leader_index: int | None = None,
         quadratic_cost: bool = True,
         accel_cnstr_tightening: float = 0.0,
     ):
@@ -101,6 +104,11 @@ class LocalMpc(MpcMldCentDecup):
         x_l = [self.x[i * nx_l : (i + 1) * nx_l, :] for i in range(self.n)]
         u_l = [u[i * self.nu_l : (i + 1) * self.nu_l, :] for i in range(self.n)]
 
+        if rel_leader_index is not None:
+            self.leader_x = self.mpc_model.addMVar(
+                (nx_l, self.N + 1), lb=0, ub=0, name="leader_x"
+            )
+
         # slack vars for constraints with vehicles in front and behind
         self.s_f1 = self.mpc_model.addMVar(
             (self.N + 1), lb=0, ub=float("inf"), name="s_f1"
@@ -116,9 +124,6 @@ class LocalMpc(MpcMldCentDecup):
         )
         # set these slacks to 0 if no associated vehilces. Also create state copies for vehicles 1 neighbor away
         if num_vehicles_in_front < 2:
-            self.leader_x = self.mpc_model.addMVar(
-                (nx_l, self.N + 1), lb=0, ub=0, name="leader_x"
-            )
             self.s_f2.ub = 0
             if num_vehicles_in_front < 1:
                 self.s_f1.ub = 0
@@ -137,45 +142,47 @@ class LocalMpc(MpcMldCentDecup):
 
         # cost func
         cost = 0
-        # tracking cost for vehicles in front
-        if num_vehicles_in_front == 0:  # leader
-            cost += sum(
-                [
+        # leader tracking cost
+        if rel_leader_index is not None:
+            if rel_leader_index == -1:
+                cost += sum(
+                    self.cost_func(x_b1[:, [k]] - self.leader_x[:, [k]], self.Q_x)
+                    for k in range(self.N + 1)
+                )
+            elif rel_leader_index == 0:
+                cost += sum(
                     self.cost_func(x_me[:, [k]] - self.leader_x[:, [k]], self.Q_x)
                     for k in range(self.N + 1)
-                ]
-            )
-        elif num_vehicles_in_front == 1:  # vehicle behind leader
-            cost += sum(
-                [
+                )
+            elif rel_leader_index == 1:
+                cost += sum(
                     self.cost_func(x_f1[:, [k]] - self.leader_x[:, [k]], self.Q_x)
-                    + self.cost_func(
-                        x_me[:, [k]]
-                        - x_f1[:, [k]]
-                        - spacing_policy.spacing(x_me[:, [k]]),
-                        self.Q_x,
-                    )
                     for k in range(self.N + 1)
-                ]
-            )
-        else:
+                )
+            else:
+                raise ValueError(
+                    f"rel leader index must be -1, 0, or 1. Got {rel_leader_index}."
+                )
+
+        # tracking cost for vehicles ahead
+        if num_vehicles_in_front > 0:
             cost += sum(
-                [
+                self.cost_func(
+                    x_me[:, [k]] - x_f1[:, [k]] - spacing_policy.spacing(x_me[:, [k]]),
+                    self.Q_x,
+                )
+                for k in range(self.N + 1)
+            )
+            if num_vehicles_in_front > 1:
+                cost += sum(
                     self.cost_func(
                         x_f1[:, [k]]
                         - self.x_f2[:, [k]]
                         - spacing_policy.spacing(x_f1[:, [k]]),
                         self.Q_x,
                     )
-                    + self.cost_func(
-                        x_me[:, [k]]
-                        - x_f1[:, [k]]
-                        - spacing_policy.spacing(x_me[:, [k]]),
-                        self.Q_x,
-                    )
                     for k in range(self.N + 1)
-                ]
-            )
+                )
         # trcking cost for vehicles behind
         if num_vehicles_behind > 0:
             cost += sum(
@@ -298,14 +305,14 @@ class LocalMpc(MpcMldCentDecup):
             self.x_b2[:, [k]].lb = x_b2[:, [k]]
             self.x_b2[:, [k]].ub = x_b2[:, [k]]
 
-    def eval_cost(self, x: np.ndarray, u: np.ndarray):
+    def eval_cost(self, x: np.ndarray, u: np.ndarray, discrete_gears: bool = False):
         # set the bounds of the vars in the model to fix the vals
         for k in range(
             self.N
         ):  # we dont constain the N+1th state, as it is defined by shifted control
             self.x[:, [k]].ub = x[:, [k]]
             self.x[:, [k]].lb = x[:, [k]]
-        if u.shape[0] > self.n * self.nu_l:  # discrete gears included
+        if discrete_gears:
             self.u_g.ub = u
             self.u_g.lb = u
         else:
@@ -319,7 +326,7 @@ class LocalMpc(MpcMldCentDecup):
             cost = float("inf")  # infinite cost if infeasible
         return cost
 
-    def solve_mpc(self, state):
+    def solve_mpc(self, state, raises: bool = False):
         # the solve method is overridden so that the bounds on the vars are set back to normal before solving.
         self.x.ub = float("inf")
         self.x.lb = -float("inf")
@@ -330,7 +337,7 @@ class LocalMpc(MpcMldCentDecup):
             pass
         self.u.ub = float("inf")
         self.u.lb = -float("inf")
-        return super().solve_mpc(state)
+        return super().solve_mpc(state, raises=raises)
 
 
 class LocalMpcGear(LocalMpc, MpcMldCentDecup, MpcGear):
@@ -341,12 +348,20 @@ class LocalMpcGear(LocalMpc, MpcMldCentDecup, MpcGear):
         num_vehicles_in_front: int,
         num_vehicles_behind: int,
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
+        rel_leader_index: int | None = None,
         quadratic_cost: bool = True,
         thread_limit: int | None = None,
         accel_cnstr_tightening: float = 0.0,
     ) -> None:
         self.n = len(systems)
-        MpcMldCentDecup.__init__(self, systems, self.n, N, thread_limit=thread_limit, constrain_first_state=False)
+        MpcMldCentDecup.__init__(
+            self,
+            systems,
+            self.n,
+            N,
+            thread_limit=thread_limit,
+            constrain_first_state=False,
+        )
         F = block_diag(*([systems[i]["F"] for i in range(self.n)]))
         G = np.vstack([systems[i]["G"] for i in range(self.n)])
         self.setup_gears(N, F, G)
@@ -355,6 +370,41 @@ class LocalMpcGear(LocalMpc, MpcMldCentDecup, MpcGear):
             num_vehicles_in_front,
             num_vehicles_behind,
             spacing_policy,
+            rel_leader_index,
+            quadratic_cost,
+            accel_cnstr_tightening,
+        )
+
+class LocalMpcNonlinearGear(LocalMpc, MpcMldCentDecup, MpcNonlinearGear):
+    def __init__(
+        self,
+        N: int,
+        systems: list[dict],
+        num_vehicles_in_front: int,
+        num_vehicles_behind: int,
+        spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
+        rel_leader_index: int | None = None,
+        quadratic_cost: bool = True,
+        thread_limit: int | None = None,
+        accel_cnstr_tightening: float = 0.0,
+    ) -> None:
+        self.n = len(systems)
+        MpcNonlinearGear.__init__(
+            self,
+            systems,
+            N,
+            thread_limit=thread_limit,
+            constrain_first_state=False,
+        )
+        F = block_diag(*([systems[i]["F"] for i in range(self.n)]))
+        G = np.vstack([systems[i]["G"] for i in range(self.n)])
+        self.setup_gears(N, F, G)
+        self.setup_cost_and_constraints(
+            self.u_g,
+            num_vehicles_in_front,
+            num_vehicles_behind,
+            spacing_policy,
+            rel_leader_index,
             quadratic_cost,
             accel_cnstr_tightening,
         )
@@ -371,6 +421,7 @@ class TrackingEventBasedCoordinator(MldAgent):
         discrete_gears: bool,
         ts: float,
         event_iters: int = 4,
+        leader_index: int = 0,
     ) -> None:
         """Initialise the coordinator.
 
@@ -393,6 +444,7 @@ class TrackingEventBasedCoordinator(MldAgent):
         self.ts = ts
         self.N = N
         self.discrete_gears = discrete_gears
+        self.leader_index = leader_index
 
         # store control and state guesses
         self.state_guesses = [np.zeros((self.nx_l, N + 1)) for i in range(self.n)]
@@ -413,6 +465,7 @@ class TrackingEventBasedCoordinator(MldAgent):
             print(f"iter {iter + 1}")
             best_cost_dec = -float("inf")
             best_idx = -1  # gets set to an agent index if there is a cost improvement
+            feasible_sol_flag = False
             for i in range(self.n):
                 # get local initial condition and local initial guesses
                 if i == 0:
@@ -454,15 +507,21 @@ class TrackingEventBasedCoordinator(MldAgent):
                 if i < self.n - 2:
                     self.agents[i].mpc.set_x_b2(self.state_guesses[i + 2])
 
-                temp_costs[i] = self.agents[i].mpc.eval_cost(x_guess, u_guess)
-                self.agents[i].get_control(x_l)
+                temp_costs[i] = self.agents[i].mpc.eval_cost(x_guess, u_guess, discrete_gears = self.discrete_gears)
+                _, _ = self.agents[i].get_control(x_l)
                 new_cost = self.agents[i].get_predicted_cost()
+
+                if new_cost < float('inf'):
+                    feasible_sol_flag = True
+
                 if (temp_costs[i] - new_cost > best_cost_dec) and (
                     temp_costs[i] - new_cost > threshold
                 ):
                     best_cost_dec = temp_costs[i] - new_cost
                     best_idx = i
 
+            if not feasible_sol_flag:
+                raise RuntimeWarning('No feasible solution found for any event based agent.')
             # get solve times and node count
             self.temp_solve_time += max(
                 [self.agents[i].run_time for i in range(self.n)]
@@ -509,52 +568,23 @@ class TrackingEventBasedCoordinator(MldAgent):
             else:  # don't repeat the repetitions if no-one improved cost
                 break
 
-        # debugging
-        if DEBUG:
-            cost_inc = 0
-            for i in range(self.n):
-                local_x = self.state_guesses[i]
-                local_u = self.control_guesses[i]
-                for k in range(self.N):
-                    if i == 0:
-                        front = self.agents[0].mpc.leader_x.X
-                        sep_temp = np.zeros((2, 1))
-                    else:
-                        front = self.state_guesses[i - 1]
-                        raise NotImplementedError()
-                        sep_temp = 0
-                    cost_inc += (
-                        local_x[:, k] - front[:, k] - sep_temp.T
-                    ) @ self.Q_x @ (
-                        local_x[:, [k]] - front[:, [k]] - sep_temp
-                    ) + local_u[
-                        :, k
-                    ] @ self.Q_u @ local_u[
-                        :, [k]
-                    ]
-                cost_inc += (
-                    (local_x[:, self.N] - front[:, self.N] - sep_temp.T)
-                    @ self.Q_x
-                    @ (local_x[:, [self.N]] - front[:, [self.N]] - sep_temp)
-                )
-
         if self.discrete_gears:
             return np.vstack(
                 (
                     np.vstack([self.control_guesses[i][:, [0]] for i in range(self.n)]),
                     np.vstack([self.gear_guesses[i][:, [0]] for i in range(self.n)]),
                 )
-            )
+            ), {}
         else:
-            return np.vstack([self.control_guesses[i][:, [0]] for i in range(self.n)])
+            return np.vstack([self.control_guesses[i][:, [0]] for i in range(self.n)]), {}
 
     def on_timestep_end(self, env: Env, episode: int, timestep: int) -> None:
-        self.agents[0].mpc.set_leader_x(
-            self.leader_x[:, timestep : timestep + self.N + 1]
-        )
-        self.agents[1].mpc.set_leader_x(
-            self.leader_x[:, timestep : timestep + self.N + 1]
-        )
+        leader_x = self.leader_x[:, timestep : timestep + self.N + 1]
+        self.agents[self.leader_index].mpc.set_leader_x(leader_x)
+        if self.leader_index > 0:
+            self.agents[self.leader_index - 1].mpc.set_leader_x(leader_x)
+        if self.leader_index < self.n - 1:
+            self.agents[self.leader_index + 1].mpc.set_leader_x(leader_x)
 
         # shift previous solutions to be initial guesses at next step
         for i in range(self.n):
@@ -580,8 +610,12 @@ class TrackingEventBasedCoordinator(MldAgent):
         return super().on_timestep_end(env, episode, timestep)
 
     def on_episode_start(self, env: Env, episode: int, state) -> None:
-        self.agents[0].mpc.set_leader_x(self.leader_x[:, 0 : self.N + 1])
-        self.agents[1].mpc.set_leader_x(self.leader_x[:, 0 : self.N + 1])
+        leader_x = self.leader_x[:, 0 : self.N + 1]
+        self.agents[self.leader_index].mpc.set_leader_x(leader_x)
+        if self.leader_index > 0:
+            self.agents[self.leader_index - 1].mpc.set_leader_x(leader_x)
+        if self.leader_index < self.n - 1:
+            self.agents[self.leader_index + 1].mpc.set_leader_x(leader_x)
 
         # initialise first step guesses with extrapolating positions
         for i in range(self.n):
@@ -619,6 +653,7 @@ def simulate(
     plot: bool = True,
     seed: int = 2,
     thread_limit: int | None = None,
+    leader_index: int = 0,
 ):
     n = sim.n  # num cars
     N = sim.N  # controller horizon
@@ -642,6 +677,8 @@ def simulate(
                 leader_trajectory=leader_trajectory,
                 spacing_policy=spacing_policy,
                 start_from_platoon=sim.start_from_platoon,
+                leader_index=leader_index,
+                ep_len=sim.ep_len
             ),
             max_episode_steps=ep_len,
         )
@@ -649,26 +686,19 @@ def simulate(
 
     # mpcs
     if sim.vehicle_model_type == "pwa_gear":
-        mpcs = [
-            LocalMpc(
-                N,
-                pwa_systems=(
-                    systems[:2]
-                    if i == 0
-                    else (systems[-2:] if i == n - 1 else systems[i - 1 : i + 2])
-                ),
-                num_vehicles_in_front=i if i < 2 else 2,
-                num_vehicles_behind=(n - 1) - i if i > n - 3 else 2,
-                spacing_policy=spacing_policy,
-                thread_limit=thread_limit,
-                accel_cnstr_tightening=0.01,
-            )
-            for i in range(n)
-        ]
+        mpc_class = LocalMpc
         discrete_gears = False
     elif sim.vehicle_model_type == "pwa_friction":
-        mpcs = [
-            LocalMpcGear(
+        mpc_class = LocalMpcGear
+        discrete_gears = True
+    elif sim.vehicle_model_type == "nonlinear":
+        mpc_class = LocalMpcNonlinearGear
+        discrete_gears = True
+    else:
+        raise ValueError(f"{sim.vehicle_model_type} is not a valid vehicle model type.")
+
+    mpcs = [
+            mpc_class(
                 N,
                 systems=(
                     systems[:2]
@@ -677,18 +707,20 @@ def simulate(
                 ),
                 num_vehicles_in_front=i if i < 2 else 2,
                 num_vehicles_behind=(n - 1) - i if i > n - 3 else 2,
+                rel_leader_index=(
+                    -1
+                    if i == leader_index - 1
+                    else (
+                        0
+                        if i == leader_index
+                        else (1 if i == leader_index + 1 else None)
+                    )
+                ),
                 spacing_policy=spacing_policy,
-                accel_cnstr_tightening=0.05,
+                thread_limit=thread_limit,
             )
             for i in range(n)
         ]
-        discrete_gears = True
-    elif sim.vehicle_model_type == "nonlinear":
-        discrete_gears = True
-        raise NotImplementedError()
-    else:
-        raise ValueError(f"{sim.vehicle_model_type} is not a valid vehicle model type.")
-
     # agent
     agent = TrackingEventBasedCoordinator(
         mpcs,
@@ -699,6 +731,7 @@ def simulate(
         discrete_gears=discrete_gears,
         ts=ts,
         event_iters=event_iters,
+        leader_index=leader_index,
     )
 
     agent.evaluate(env=env, episodes=1, seed=seed)
@@ -734,4 +767,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), event_iters=1, seed=1)
+    simulate(Sim(), plot=True, event_iters=4, seed=0, leader_index=0)

@@ -29,9 +29,11 @@ class MpcGearCent(MpcMldCent, MpcMldCentDecup, MpcGear):
         N: int,
         systems: list[dict],
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
+        leader_index: int = 0,
         quadratic_cost: bool = True,
         thread_limit: int | None = None,
         accel_cnstr_tightening: float = 0.0,
+        real_vehicle_as_reference: bool = False,
     ) -> None:
         self.n = n
         MpcMldCentDecup.__init__(
@@ -41,7 +43,12 @@ class MpcGearCent(MpcMldCent, MpcMldCentDecup, MpcGear):
         G = np.vstack([systems[i]["G"] for i in range(n)])
         self.setup_gears(N, F, G)
         self.setup_cost_and_constraints(
-            self.u_g, spacing_policy, quadratic_cost, accel_cnstr_tightening
+            self.u_g,
+            spacing_policy,
+            leader_index,
+            quadratic_cost,
+            accel_cnstr_tightening,
+            real_vehicle_as_reference,
         )
 
 
@@ -52,14 +59,22 @@ class MpcNonlinearGearCent(MpcMldCent, MpcNonlinearGear):
         N: int,
         nl_systems: list[dict],
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
+        leader_index: int = 0,
         quadratic_cost: bool = True,
         thread_limit: int | None = None,
+        real_vehicle_as_reference: bool = False,
     ) -> None:
         MpcNonlinearGear.__init__(self, nl_systems, N, thread_limit=thread_limit)
         F = block_diag(*[nl_systems[i]["F"] for i in range(n)])
         G = np.vstack([nl_systems[i]["G"] for i in range(n)])
         self.setup_gears(N, F, G)
-        self.setup_cost_and_constraints(self.u_g, spacing_policy, quadratic_cost)
+        self.setup_cost_and_constraints(
+            self.u_g,
+            spacing_policy,
+            leader_index,
+            quadratic_cost,
+            real_vehicle_as_reference,
+        )
 
 
 class TrackingCentralizedAgent(MldAgent):
@@ -92,6 +107,7 @@ def simulate(
     plot: bool = True,
     seed: int = 1,
     thread_limit: int | None = None,
+    leader_index=0,
 ):
     n = sim.n  # num cars
     N = sim.N  # controller horizon
@@ -115,6 +131,10 @@ def simulate(
                 leader_trajectory=leader_trajectory,
                 spacing_policy=spacing_policy,
                 start_from_platoon=sim.start_from_platoon,
+                real_vehicle_as_reference=sim.real_vehicle_as_reference,
+                ep_len=sim.ep_len,
+                leader_index=leader_index,
+                quadratic_cost=sim.quadratic_cost
             ),
             max_episode_steps=ep_len,
         )
@@ -127,8 +147,10 @@ def simulate(
             N,
             systems,
             spacing_policy=spacing_policy,
+            leader_index=leader_index,
             thread_limit=thread_limit,
-            accel_cnstr_tightening=0,
+            real_vehicle_as_reference=sim.real_vehicle_as_reference,
+            quadratic_cost=sim.quadratic_cost
         )
     elif sim.vehicle_model_type == "pwa_friction":
         mpc = MpcGearCent(
@@ -136,12 +158,21 @@ def simulate(
             N,
             systems,
             spacing_policy=spacing_policy,
+            leader_index=leader_index,
             thread_limit=thread_limit,
-            accel_cnstr_tightening=0,
+            real_vehicle_as_reference=sim.real_vehicle_as_reference,
+            quadratic_cost=sim.quadratic_cost
         )
     elif sim.vehicle_model_type == "nonlinear":
         mpc = MpcNonlinearGearCent(
-            n, N, systems, spacing_policy=spacing_policy, thread_limit=thread_limit
+            n,
+            N,
+            systems,
+            spacing_policy=spacing_policy,
+            leader_index=leader_index,
+            thread_limit=thread_limit,
+            real_vehicle_as_reference=sim.real_vehicle_as_reference,
+            quadratic_cost=sim.quadratic_cost
         )
     else:
         raise ValueError(f"{sim.vehicle_model_type} is not a valid vehicle model type.")
@@ -149,7 +180,7 @@ def simulate(
     # agent
     agent = TrackingCentralizedAgent(mpc, ep_len, N, leader_x)
 
-    agent.evaluate(env=env, episodes=1, seed=seed)
+    agent.evaluate(env=env, episodes=1, seed=seed, open_loop=sim.open_loop)
 
     if len(env.observations) > 0:
         X = env.observations[0].squeeze()
@@ -183,4 +214,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=False, seed=2)
+    simulate(Sim(), save=False, seed=3, leader_index=0)

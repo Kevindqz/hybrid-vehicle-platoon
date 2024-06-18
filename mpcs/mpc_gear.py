@@ -11,7 +11,7 @@ class MpcGear(MpcMld):
     each control signal are assumed decoupled.
     The dynamics are provided as a PWA system dict."""
 
-    def __init__(self, system: dict, N: int, thread_limit: int | None = None) -> None:
+    def __init__(self, system: dict, N: int, thread_limit: int | None = None, constrain_first_state: bool = False) -> None:
         """Init the MLD model of PWA system and the MPC wit hdiscrete inputs.
         Parameters
         ----------
@@ -23,7 +23,9 @@ class MpcGear(MpcMld):
             Prediction horizon length."""
 
         # init the PWA system - MLD constraints and binary variables for PWA dynamics
-        super().__init__(system, N, thread_limit=thread_limit, constrain_first_state=False)
+        super().__init__(
+            system, N, thread_limit=thread_limit, constrain_first_state=constrain_first_state
+        )
 
     def setup_gears(self, N: int, F: np.ndarray, G: np.ndarray):
         """Set up constraints in mixed-integer problem for gears."""
@@ -111,9 +113,9 @@ class MpcGear(MpcMld):
         self.sigma = sigma
         self.b = b
 
-    def solve_mpc(self, state):
+    def solve_mpc(self, state, raises: bool = True):
         """Solve mpc for gear and throttle."""
-        u_0, info = super().solve_mpc(state)
+        u_0, info = super().solve_mpc(state, raises=raises)
         if self.mpc_model.Status == 2:  # check for successful solve
             u_g = self.u_g.X
             sig = self.sigma.X
@@ -122,26 +124,64 @@ class MpcGear(MpcMld):
                 for k in range(self.N):
                     gears[i, k] = sig[:, i, k].argmax() + 1
         else:
-            raise RuntimeWarning(f"gear mpc for state {state} is infeasible.")
-            # u_g = np.zeros((self.m, self.N))
-            # gears = 6* np.ones((self.m, self.N))  # default set all gears
+            if raises:
+                raise RuntimeWarning(f"gear mpc for state {state} is infeasible.")
+            else:
+                u_g = np.zeros((self.m, self.N))
+                gears = 6* np.ones((self.m, self.N))  # default set all gears
 
-        info["u"] = u_g
+        info["u"] = np.vstack((u_g, gears))
         self.gears_pred = gears
         return np.vstack((u_g[:, [0]], gears[:, [0]])), info
-
+    
+    def evaluate_cost(self, x0: np.ndarray, u: np.ndarray, j: np.ndarray | None = None):
+        """Evalaute cost of MPC problem for a given x0 and u traj"""
+        if u.shape != self.u.shape:
+            raise ValueError(f'Expected u shape {self.u.shape}. Got {u.shape}.')
+        if j is not None:
+            for k_1 in range(u.shape[1]):   # loop horizon
+                for k_2 in range(u.shape[0]):   # loop vehicles
+                    for k_3 in range(6):    # loop gears
+                        if j[k_2, k_1] == k_3 + 1:
+                            self.sigma[k_3, k_2, k_1].ub = 1
+                            self.sigma[k_3, k_2, k_1].lb = 1
+                        else:
+                            self.sigma[k_3, k_2, k_1].ub = 0
+                            self.sigma[k_3, k_2, k_1].lb = 0
+        
+        self.IC.RHS = x0
+        self.u_g.ub = u
+        self.u_g.lb = u
+        self.mpc_model.optimize()
+        if self.mpc_model.Status == 2:  # check for successful solve
+            cost = self.mpc_model.objVal
+        else:
+            cost = 'inf'
+        self.x.ub = float('inf')
+        self.x.lb = -float('inf')
+        self.u_g.ub = float('inf')
+        self.u_g.lb = -float('inf')
+        if j is not None:
+            for k_1 in range(u.shape[1]):   # loop horizon
+                for k_2 in range(u.shape[0]):   # loop vehicles
+                    for k_3 in range(6):    # loop gears
+                            self.sigma[k_3, k_2, k_1].ub = float('inf')
+                            self.sigma[k_3, k_2, k_1].lb = -float('inf')
+        return cost
+        
 
 class MpcNonlinearGear(MpcGear):
     """An MPC controller than uses a nonlinear vehicle model along with discrete gear inputs x^+ = f(x) + B(j,x)u."""
 
     def __init__(
-        self, systems: list[dict], N: int, thread_limit: int | None = None
+        self, systems: list[dict], N: int, thread_limit: int | None = None, constrain_first_state: bool = False
     ) -> None:
         """Instantiate mixed-integer model for nonlinear dynamics for len(systems) systems."""
         # build mixed-integer model
         mpc_model = gp.Model("non_linear_gear_mpc")
         mpc_model.setParam("OutputFlag", 0)
         mpc_model.setParam("Heuristics", 0)
+        mpc_model.setParam("NonConvex", 2)
         if thread_limit is not None:
             mpc_model.params.threads = thread_limit
 
@@ -179,7 +219,7 @@ class MpcNonlinearGear(MpcGear):
             (
                 systems[i]["D"] @ x_l[i][:, [k]] <= systems[i]["E"]
                 for i in range(n)
-                for k in range(N + 1)
+                for k in range(0 if constrain_first_state else 1, N + 1)
             ),
             name="state constraints",
         )
@@ -202,3 +242,5 @@ class MpcNonlinearGear(MpcGear):
         self.n = n
         self.m = n * nu_l
         self.N = N
+
+    

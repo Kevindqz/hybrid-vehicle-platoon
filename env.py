@@ -28,7 +28,8 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         self,
         n: int,
         platoon: Platoon,
-        ep_len: int = 100,
+        ep_len: int,
+        leader_index: int = 0,
         ts: float = 1,
         leader_trajectory: LeaderTrajectory = ConstantVelocityLeaderTrajectory(
             p=3000, v=20, trajectory_len=150, ts=1
@@ -37,9 +38,11 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         d_safe: float = 25,
         start_from_platoon: bool = False,
         quadratic_cost: bool = True,
+        real_vehicle_as_reference: bool = False,
     ) -> None:
         super().__init__()
 
+        self.leader_index = leader_index
         self.platoon = platoon
         self.ts = ts
         self.n = n
@@ -48,14 +51,21 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         self.start_from_platoon = start_from_platoon
         self.leader_trajectory = leader_trajectory
         self.spacing_policy = spacing_policy
+        self.real_vehicle_as_reference = real_vehicle_as_reference
         if quadratic_cost:
             self.cost_func = self.quad_cost
         else:
             self.cost_func = self.lin_cost
 
+        if leader_index != 0 and real_vehicle_as_reference:
+            raise NotImplementedError(
+                f"Not implemented for real vehicle with leader not 0."
+            )
+
         self.previous_action: np.ndarray | None = (
             None  # store previous action to penalise variation
         )
+        self.previous_state: np.ndarray | None = None  # store previous state
 
     def reset(
         self,
@@ -70,13 +80,13 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         np.random.seed(seed)
         # create once 100 random starting states
-        starting_velocities = [30] + [
-            20 * np.random.random() + 5 for i in range(100)
-        ]  # starting velocities between 5-40 ms-1
+        starting_velocities = [
+            30 * np.random.random() + 5 for i in range(100)
+        ]  # starting velocities between 5-35 ms-1
         # starting positions between 0-1000 meters, with some forced spacing
         front_pos = 3000.0
-        spread = 50
-        spacing = 50
+        spread = 100
+        spacing = 60
         starting_positions = [front_pos]
         for i in range(1, 100):
             starting_positions.append(
@@ -92,9 +102,14 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         else:  # if not random, the vehicles start in perfect platoon with leader on trajectory
             for i in range(self.n):
-                self.x[i * self.nx_l : self.nx_l * (i + 1), :] = self.leader_x[
-                    :, [0]
-                ] + i * self.spacing_policy.spacing(self.leader_x[:, [0]])
+                if not self.real_vehicle_as_reference:
+                    self.x[i * self.nx_l : self.nx_l * (i + 1), :] = self.leader_x[
+                        :, [0]
+                    ] + i * self.spacing_policy.spacing(self.leader_x[:, [0]])
+                else:
+                    self.x[i * self.nx_l : self.nx_l * (i + 1), :] = self.leader_x[
+                        :, [0]
+                    ] + (i + 1) * self.spacing_policy.spacing(self.leader_x[:, [0]])
 
         self.step_counter = 0
         self.viol_counter.append(np.zeros(self.ep_len))
@@ -124,9 +139,17 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         cost = 0
         # tracking cost
-        cost += self.cost_func(
-            x[0] - self.leader_x[:, [self.step_counter]], self.Q_x
-        )  # first vehicle tracking leader trajectory
+        if not self.real_vehicle_as_reference:
+            cost += self.cost_func(
+                x[self.leader_index] - self.leader_x[:, [self.step_counter]], self.Q_x
+            )  # first vehicle tracking leader trajectory
+        else:
+            cost += self.cost_func(
+                x[0]
+                - self.leader_x[:, [self.step_counter]]
+                - (self.spacing_policy.spacing(x[0])),
+                self.Q_x,
+            )
         cost += sum(
             [
                 self.cost_func(
@@ -142,10 +165,18 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         cost += sum([self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)])
 
         # check for constraint violations
-        if any([x[i][0, 0] - x[i + 1][0, 0] < self.d_safe for i in range(self.n - 1)]):
+        if (
+            self.real_vehicle_as_reference
+            and self.leader_x[0, self.step_counter] - x[0][0, 0] < self.d_safe
+        ):
+            self.viol_counter[-1][self.step_counter] = 100
+        elif any(
+            [x[i][0, 0] - x[i + 1][0, 0] < self.d_safe for i in range(self.n - 1)]
+        ):
             self.viol_counter[-1][self.step_counter] = 100
 
         self.previous_action = action
+        self.previous_state = state
         return cost
 
     def step(
@@ -179,3 +210,10 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         self.step_counter += 1
         print(f"step {self.step_counter}")
         return x_new, r, False, False, {}
+
+    def get_state(self):
+        return self.x
+
+    def get_previous_state(self):
+        """Returns state of platoon at previous time step. Uses current state for first time-step."""
+        return self.previous_state if self.previous_state is not None else self.x
