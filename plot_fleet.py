@@ -20,14 +20,14 @@ def plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_state, violations=Non
     axs[0].legend(["reference"])
     # if violations is not None:
     #    axs[0].plot(violations)
- 
-    # plot acceleration
-    # _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
-    # axs.plot(acc)
-    # axs.set_ylabel("acceleration")
-    # axs.set_xlabel(f"time step k")
-    
-    # plot control input and total cost
+
+    # plot acceleration (only 1 vehicle for now)
+    _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    axs.plot(acc)
+    axs.set_ylabel("acceleration")
+    axs.set_xlabel(f"time step k")
+
+    # plot control input and total cost (only 1 vehicle for now)
     _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
     axs.plot(U)
     axs.set_ylabel("control input")
@@ -47,6 +47,13 @@ def plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_state, violations=Non
     _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
     axs.plot(r_fuel)
     axs.set_ylabel("fuel cost")
+    axs.set_xlabel(f"time step k")
+
+    # plot aggregated fuel consumption cost
+    _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    total_fuel_costs = [sum(r_fuel[: i + 1]) for i in range(len(r_fuel))]
+    axs.plot(total_fuel_costs)
+    axs.set_ylabel("total fuel cost")
     axs.set_xlabel(f"time step k")
 
     plt.show()

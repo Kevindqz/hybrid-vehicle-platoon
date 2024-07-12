@@ -31,10 +31,10 @@ class Sim:
     ] = "pwa_friction"  # MLD form (model II) is pwa_friction
     start_from_platoon: bool = False
     quadratic_cost: bool = True
-    fuel_penalize: float = 50
-    n = 1
-    N = 3
-    ep_len = N if open_loop else 40
+    fuel_penalize: float = 0
+    n = 3
+    N = 5
+    ep_len = N if open_loop else 80
     spacing_policy = ConstantSpacingPolicy(50)
     leader_trajectory = ConstantVelocityLeaderTrajectory(
         p=3000, v=20, trajectory_len=ep_len + 50, ts=Params.ts

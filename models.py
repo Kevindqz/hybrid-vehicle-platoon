@@ -4,6 +4,8 @@ from typing import Literal
 import gurobipy as gp
 import matplotlib.pyplot as plt
 import numpy as np
+import sympy as sp
+from scipy.integrate import solve_ivp
 from dmpcrl.utils.discretisation import forward_euler
 
 
@@ -90,11 +92,13 @@ class Vehicle:
         10000.0,
     )  # abritrary position bounds in PWA models (conversion to PWA requires bounded states)
     Te_max = 80  # maximum engine torque - constant in the range 200 < w < 480
-
+    
     def __init__(self, m: int = 800) -> None:
         """Create vehicle with mass m."""
         self.m = m
         self.gear_model = GearTransimission()
+        # self.upshift_time = self.get_max_up_shift_time()
+        # self.downshift_time = self.get_max_down_shift_time()
 
     def A(self, x: np.ndarray):
         """A(x) component of non-linear hybrid dynamics."""
@@ -210,6 +214,72 @@ class Vehicle:
             raise ValueError(f"Velocity {v} is not valid for gear {j+1}")
 
         return (self.c_fric * v * v + self.mu * self.m * self.grav) / (self.b[j])
+    
+    # def get_max_up_shift_time(self):
+    #     """Use numerical method to find the time to upshift from vl[j] to vl[j+1]."""
+    #     t_up = []
+    #     for i in range(len(self.vl)-1):
+    #         # Define the right-hand side of the differential equation
+    #         def ode(t, v):
+    #             return -(self.c_fric * v**2) / self.m - self.mu * self.grav + self.b[i] / self.m
+            
+    #         # Initial condition
+    #         v_0 = self.vl[i]
+    #         # Target velocity
+    #         v_1 = self.vl[i+1]
+            
+    #         # Time span, the choice depends on the specifics of the problem
+    #         t_span = [0, 100]  # Assume the maximum shift time does not exceed 100 seconds
+            
+    #         # Solve using solve_ivp
+    #         sol = solve_ivp(ode, t_span, [v_0], method='RK45', dense_output=True)
+            
+    #         # Use interpolation to find the time corresponding to v_1
+    #         t_values = np.linspace(sol.t[0], sol.t[-1], 1000)
+    #         v_values = sol.sol(t_values)
+    #         idx = np.where(v_values[0] >= v_1)[0]
+            
+    #         # If a corresponding time point is found
+    #         if len(idx) > 0:
+    #             t_up.append(t_values[idx[0]])
+    #         else:
+    #             # If no corresponding time point is found, may need to adjust the time span or check the differential equation
+    #             t_up.append(None)
+        
+    #     return t_up
+
+    # def get_max_down_shift_time(self):
+    #     """Use numerical method to find the time to upshift from vh[j+1] to vh[j]."""
+    #     t_down = []
+    #     for i in range(len(self.vh)-1):
+    #         # Define the right-hand side of the differential equation
+    #         def ode(t, v):
+    #             return -(self.c_fric * v**2) / self.m - self.mu * self.grav + self.b[i+1] / self.m * (-1)
+            
+    #         # Initial condition
+    #         v_0 = self.vh[i+1]
+    #         # Target velocity
+    #         v_1 = self.vh[i]
+            
+    #         # Time span, the choice depends on the specifics of the problem
+    #         t_span = [0, 100]  # Assume the maximum shift time does not exceed 100 seconds
+            
+    #         # Solve using solve_ivp
+    #         sol = solve_ivp(ode, t_span, [v_0], method='RK45', dense_output=True)
+            
+    #         # Use interpolation to find the time corresponding to v_1
+    #         t_values = np.linspace(sol.t[0], sol.t[-1], 1000)
+    #         v_values = sol.sol(t_values)
+    #         idx = np.where(v_values[0] <= v_1)[0]
+            
+    #         # If a corresponding time point is found
+    #         if len(idx) > 0:
+    #             t_down.append(t_values[idx[0]])
+    #         else:
+    #             # If no corresponding time point is found, may need to adjust the time span or check the differential equation
+    #             t_down.append(None)
+        
+    #     return t_down        
 
 
 class Platoon:

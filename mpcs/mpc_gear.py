@@ -35,7 +35,7 @@ class MpcGear(MpcMld):
             thread_limit=thread_limit,
             constrain_first_state=constrain_first_state,
         )
-
+        self.sigma: gp.Var | None = None
     def setup_gears(self, N: int, F: np.ndarray, G: np.ndarray):
         """Set up constraints in mixed-integer problem for gears."""
         nu = self.u.shape[0]
@@ -48,14 +48,14 @@ class MpcGear(MpcMld):
         u_g = self.mpc_model.addMVar(
             (nu, N), lb=-float("inf"), ub=float("inf"), name="u_g"
         )
-        sigma = self.mpc_model.addMVar(
+        self.sigma = self.mpc_model.addMVar(
             (num_gears, nu, N), vtype=gp.GRB.BINARY, name="sigma"
         )
 
         # constrain only one gear to be active at a time
         self.mpc_model.addConstrs(
             (
-                gp.quicksum(sigma[j, i, k] for j in range(num_gears)) == 1
+                gp.quicksum(self.sigma[j, i, k] for j in range(num_gears)) == 1
                 for i in range(nu)
                 for k in range(N)
             ),
@@ -95,16 +95,16 @@ class MpcGear(MpcMld):
                     M: float = Vehicle.u_max * Vehicle.b[j]
                     m: float = Vehicle.u_min * Vehicle.b[j]
                     # the following four constraints make b_i,j = sigma_i,j * H[i] * u_g[i]
-                    self.mpc_model.addConstr(b[j, i, [k]] <= M * sigma[j, i, [k]])
-                    self.mpc_model.addConstr(b[j, i, [k]] >= m * sigma[j, i, [k]])
+                    self.mpc_model.addConstr(b[j, i, [k]] <= M * self.sigma[j, i, [k]])
+                    self.mpc_model.addConstr(b[j, i, [k]] >= m * self.sigma[j, i, [k]])
 
                     self.mpc_model.addConstr(
                         b[j, i, [k]]
-                        <= Vehicle.b[j] * u_g[i, [k]] - m * (1 - sigma[j, i, [k]])
+                        <= Vehicle.b[j] * u_g[i, [k]] - m * (1 - self.sigma[j, i, [k]])
                     )
                     self.mpc_model.addConstr(
                         b[j, i, [k]]
-                        >= Vehicle.b[j] * u_g[i, [k]] - M * (1 - sigma[j, i, [k]])
+                        >= Vehicle.b[j] * u_g[i, [k]] - M * (1 - self.sigma[j, i, [k]])
                     )
 
                     # next constraints force sigma to be active only when
@@ -112,14 +112,14 @@ class MpcGear(MpcMld):
                     M = Vehicle.v_max - Vehicle.vh[j]
                     # pick out velocity associated with i'th control signal
                     f = self.x[2 * i + 1, [k]] - Vehicle.vh[j]
-                    self.mpc_model.addConstr(f <= M * (1 - sigma[j, i, [k]]))
+                    self.mpc_model.addConstr(f <= M * (1 - self.sigma[j, i, [k]]))
 
                     M = Vehicle.vl[j] - Vehicle.v_min
                     f = Vehicle.vl[j] - self.x[2 * i + 1, [k]]
-                    self.mpc_model.addConstr(f <= M * (1 - sigma[j, i, [k]]))
+                    self.mpc_model.addConstr(f <= M * (1 - self.sigma[j, i, [k]]))
 
         self.u_g = u_g
-        self.sigma = sigma
+        self.sigma = self.sigma
         self.b = b
 
     def solve_mpc(self, state, raises: bool = True):

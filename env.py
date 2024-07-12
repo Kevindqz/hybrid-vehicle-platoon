@@ -130,7 +130,10 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         return np.linalg.norm(Q @ x, ord=1)
 
     def get_stage_cost(
-        self, state: npt.NDArray[np.floating], action: npt.NDArray[np.floating], gear: npt.NDArray[np.integer]
+        self,
+        state: npt.NDArray[np.floating],
+        action: npt.NDArray[np.floating],
+        gear: npt.NDArray[np.integer],
     ) -> Tuple[float, float, float]:
         """Computes the tracking stage cost."""
         if (
@@ -169,7 +172,9 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         # control effort cost
         cost_tracking += sum([self.cost_func(u[i], self.Q_u) for i in range(self.n)])
         # control variation cost
-        cost_tracking += sum([self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)])
+        cost_tracking += sum(
+            [self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)]
+        )
 
         # fuel consumption cost
         vehicles = self.platoon.get_vehicles()
@@ -186,9 +191,9 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
             # gear = self.platoon.get_gear_from_vehicle_velocity(i, x[i][1])
             traction = self.platoon.get_traction_from_vehicle_gear(i, int(gear[i][0]))
             acc = (
-            -vehicles[i].c_fric * x[i][1] ** 2 / vehicles[i].m
-            - vehicles[i].mu * vehicles[i].grav
-            + traction * u[i][0]/vehicles[i].m
+                -vehicles[i].c_fric * x[i][1] ** 2 / vehicles[i].m
+                - vehicles[i].mu * vehicles[i].grav
+                + traction * u[i][0] / vehicles[i].m
             )
             self.acc_list.append(acc)
 
@@ -203,7 +208,13 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
                 + coefficients_c[1] * x[i][1]
                 + coefficients_c[2] * x[i][1] ** 2
             )
-            cost_fuel += sum(poly_b + poly_c * acc)
+
+            # no fuel consumption if vehicle is decelerating
+            if u[i][0] < 0 or acc < 0:
+                cost_fuel += 0
+            else:
+                cost_fuel += sum(poly_b + poly_c * acc)
+
             total_cost = cost_fuel + cost_tracking
         # check for constraint violations
         if (
@@ -252,7 +263,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         self.step_counter += 1
         print(f"step {self.step_counter}")
-        return x_new, r_total, False, False, {}
+        return x_new, r_total, False, False, {"cost_tracking": r_tracking, "cost_fuel": r_fuel}
 
     def get_state(self):
         return self.x

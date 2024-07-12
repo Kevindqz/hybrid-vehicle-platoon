@@ -4,7 +4,6 @@ from dmpcpwa.mpc.mpc_mld_cent_decup import MpcMldCentDecup
 from misc.common_controller_params import Params
 from misc.spacing_policy import ConstantSpacingPolicy, SpacingPolicy
 from models import Vehicle, Platoon
-import numpy as np
 
 
 class FuelMpcCent(MpcMldCentDecup):
@@ -34,7 +33,7 @@ class FuelMpcCent(MpcMldCentDecup):
         fuel_penalize: float = 0.0,
     ) -> None:
         super().__init__(
-            pwa_systems, n, N, thread_limit=thread_limit, constrain_first_state=False
+            pwa_systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose=True
         )  # creates the state and control variables, sets the dynamics, and creates the MLD constraints for PWA dynamics
         self.n = n
         self.N = N
@@ -126,9 +125,31 @@ class FuelMpcCent(MpcMldCentDecup):
             for k in range(self.N)
         )
 
-        acc_abs = self.mpc_model.addMVar((self.n, self.N), lb=0, ub=float("inf"), name="Acc_abs")
-        self.mpc_model.addConstrs(acc_abs[i, k] >= acc[i, k] for i in range(self.n) for k in range(self.N))
-        self.mpc_model.addConstrs(acc_abs[i, k] >= -acc[i, k] for i in range(self.n) for k in range(self.N))
+        # Add a binary variable, when u is negative, the binary variable is 0, otherwise 1
+        epsilon = self.mpc_model.addMVar(
+            (self.n, self.N), vtype=gp.GRB.BINARY, name="epsilon"
+        )
+        # Add constraints
+        self.mpc_model.addConstrs(
+            u[i, k] <= epsilon[i, k] for i in range(self.n) for k in range(self.N)
+        )
+        self.mpc_model.addConstrs(
+            u[i, k] >= epsilon[i, k] - 1 for i in range(self.n) for k in range(self.N)
+        )
+
+        # omega  = self.mpc_model.addMVar((self.n, self.N), vtype=gp.GRB.BINARY, name="omega")
+        # self.mpc_model.addConstrs(
+        #     acc[i,k] >= 100000 * (omega[i,k] - 1)
+        #     for i in range(self.n)
+        #     for k in range(self.N)
+        # )
+
+        # if_fuel  = self.mpc_model.addMVar((self.n, self.N), vtype=gp.GRB.BINARY, name="if_fuel")
+        # self.mpc_model.addConstrs(
+        #     if_fuel[i,k] == epsilon[i,k] * omega[i,k]
+        #     for i in range(self.n)
+        #     for k in range(self.N)
+        # )
 
         coefficients_b = [
             0.1569,
@@ -137,7 +158,7 @@ class FuelMpcCent(MpcMldCentDecup):
             5.975 * 10 ** (-5),
         ]
 
-        coefficients_c = [0.0724, 9.681 * 10 ** (-2) , 1.075 * 10 ** (-3)]
+        coefficients_c = [0.0724, 9.681 * 10 ** (-2), 1.075 * 10 ** (-3)]
         f = self.mpc_model.addMVar(
             (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="Fuel"
         )
@@ -160,7 +181,7 @@ class FuelMpcCent(MpcMldCentDecup):
 
                 self.mpc_model.addConstr(x_l2[i, k] == x_l[i][1, k] ** 2)
                 self.mpc_model.addConstr(f[i, k] == poly_b + poly_c * acc[i, k])
-                
+
         # tracking cost
         if not real_vehicle_as_reference:
             cost += sum(
@@ -218,7 +239,9 @@ class FuelMpcCent(MpcMldCentDecup):
 
         # add fuel consumption cost
         cost += sum(
-            fuel_penalize * f[i, k] for i in range(self.n) for k in range(self.N)
+            epsilon[i, k] * fuel_penalize * f[i, k]
+            for i in range(self.n)
+            for k in range(self.N)
         )
 
         self.mpc_model.setObjective(cost, gp.GRB.MINIMIZE)

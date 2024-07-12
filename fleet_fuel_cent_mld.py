@@ -1,5 +1,6 @@
 import pickle
 import gurobipy as gp
+from gurobipy import GRB
 import numpy as np
 from dmpcpwa.agents.mld_agent import MldAgent
 from dmpcpwa.mpc.mpc_mld import MpcMld
@@ -39,7 +40,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
     ) -> None:
         self.n = n
         MpcMldCentDecup.__init__(
-            self, systems, n, N, thread_limit=thread_limit, constrain_first_state=False
+            self, systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose=True
         )  # use the MpcMld constructor
         F = block_diag(*[systems[i]["F"] for i in range(n)])
         G = np.vstack([systems[i]["G"] for i in range(n)])
@@ -54,16 +55,18 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             real_vehicle_as_reference,
             fuel_penalize,
         )
-
-    def setup_cost_and_constraints(self,
-                                   u,
-                                   platoon: Platoon,
-                                   spacing_policy: SpacingPolicy = ...,
-                                   leader_index: int = 0,
-                                   quadratic_cost: bool = True,
-                                   accel_cnstr_tightening: float = 0,
-                                   real_vehicle_as_reference: bool = False,
-                                   fuel_penalize: float = 0.0):
+        
+    def setup_cost_and_constraints(
+        self,
+        u,
+        platoon: Platoon,
+        spacing_policy: SpacingPolicy = ...,
+        leader_index: int = 0,
+        quadratic_cost: bool = True,
+        accel_cnstr_tightening: float = 0,
+        real_vehicle_as_reference: bool = False,
+        fuel_penalize: float = 0.0,
+    ):
         # overriding the method fuelMPCGear because for discrete input model delta don't exist.
         """Set up  cost and constraints for platoon tracking. Penalises the u passed in."""
         if quadratic_cost:
@@ -102,14 +105,36 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             acc[i, k]
             == -vehicles[i].c_fric * x_l[i][1, k] ** 2 / vehicles[i].m
             - vehicles[i].mu * vehicles[i].grav
-            + self.u[i,k] / vehicles[i].m
+            + self.u[i, k] / vehicles[i].m
             for i in range(self.n)
             for k in range(self.N)
         )
 
-        acc_abs = self.mpc_model.addMVar((self.n, self.N), lb=0, ub=float("inf"), name="Acc_abs")
-        self.mpc_model.addConstrs(acc_abs[i, k] >= acc[i, k] for i in range(self.n) for k in range(self.N))
-        self.mpc_model.addConstrs(acc_abs[i, k] >= -acc[i, k] for i in range(self.n) for k in range(self.N))
+        # Add a binary variable, when u is negative, the binary variable is 0, otherwise 1
+        epsilon = self.mpc_model.addMVar(
+            (self.n, self.N), vtype=gp.GRB.BINARY, name="epsilon"
+        )
+        # Add constraints
+        self.mpc_model.addConstrs(
+            u[i, k] <= epsilon[i, k] for i in range(self.n) for k in range(self.N)
+        )
+        self.mpc_model.addConstrs(
+            u[i, k] >= epsilon[i, k] - 1 for i in range(self.n) for k in range(self.N)
+        )
+
+        # omega  = self.mpc_model.addMVar((self.n, self.N), vtype=gp.GRB.BINARY, name="omega")
+        # self.mpc_model.addConstrs(
+        #     acc[i,k] >= 100000 * (omega[i,k] - 1)
+        #     for i in range(self.n)
+        #     for k in range(self.N)
+        # )
+
+        # if_fuel  = self.mpc_model.addMVar((self.n, self.N), vtype=gp.GRB.BINARY, name="if_fuel")
+        # self.mpc_model.addConstrs(
+        #     if_fuel[i,k] == epsilon[i,k] * omega[i,k]
+        #     for i in range(self.n)
+        #     for k in range(self.N)
+        # )
 
         coefficients_b = [
             0.1569,
@@ -118,7 +143,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             5.975 * 10 ** (-5),
         ]
 
-        coefficients_c = [0.0724, 9.681 * 10 ** (-2) , 1.075 * 10 ** (-3)]
+        coefficients_c = [0.0724, 9.681 * 10 ** (-2), 1.075 * 10 ** (-3)]
         f = self.mpc_model.addMVar(
             (self.n, self.N), lb=-float("inf"), ub=float("inf"), name="Fuel"
         )
@@ -140,7 +165,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
                 )
 
                 self.mpc_model.addConstr(x_l2[i, k] == x_l[i][1, k] ** 2)
-                self.mpc_model.addConstr(f[i, k] == poly_b + poly_c *acc_abs[i, k])
+                self.mpc_model.addConstr(f[i, k] == poly_b + poly_c * acc[i, k])
 
         # tracking cost
         if not real_vehicle_as_reference:
@@ -199,7 +224,9 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
 
         # add fuel consumption cost
         cost += sum(
-            fuel_penalize * f[i, k] for i in range(self.n) for k in range(self.N)
+            epsilon[i, k] * fuel_penalize * f[i, k]
+            for i in range(self.n)
+            for k in range(self.N)
         )
 
         self.mpc_model.setObjective(cost, gp.GRB.MINIMIZE)
@@ -281,14 +308,14 @@ class TrackingCentralizedAgent(MldAgent):
 
     def on_timestep_end(self, env: Env, episode: int, timestep: int) -> None:
         # time step starts from 1, so this will set the cost accurately for the next time-step
-        self.mpc.set_leader_traj(self.leader_x[:, timestep: (timestep + self.N + 1)])
+        self.mpc.set_leader_traj(self.leader_x[:, timestep : (timestep + self.N + 1)])
         self.solve_times[env.step_counter - 1, :] = self.run_time
         self.node_counts[env.step_counter - 1, :] = self.node_count
         self.bin_var_counts[env.step_counter - 1, :] = self.num_bin_vars
         return super().on_timestep_end(env, episode, timestep)
 
     def on_episode_start(self, env: Env, episode: int, state) -> None:
-        self.mpc.set_leader_traj(self.leader_x[:, 0: self.N + 1])
+        self.mpc.set_leader_traj(self.leader_x[:, 0 : self.N + 1])
         return super().on_episode_start(env, episode, state)
 
 
@@ -335,7 +362,7 @@ def simulate(
     # mpcs
     if sim.vehicle_model_type == "pwa_gear":
         mpc = FuelMpcCent(
-            n,
+            n, 
             N,
             platoon,
             systems,
@@ -375,7 +402,7 @@ def simulate(
 
     # agent
     agent = TrackingCentralizedAgent(mpc, ep_len, N, leader_x)
-
+    
     agent.evaluate(env=env, episodes=1, seed=seed, open_loop=sim.open_loop)
 
     if len(env.observations) > 0:
@@ -401,7 +428,17 @@ def simulate(
     print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
 
     if plot:
-        plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_x, violations=env.unwrapped.viol_counter[0])
+        plot_fleet(
+            n,
+            X,
+            acc,
+            U,
+            R,
+            r_tracking,
+            r_fuel,
+            leader_x,
+            violations=env.unwrapped.viol_counter[0],
+        )
 
     if save:
         with open(
