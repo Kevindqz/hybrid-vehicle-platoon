@@ -32,7 +32,7 @@ class Sim:
     start_from_platoon: bool = False
     quadratic_cost: bool = True
     fuel_penalize: float = 0
-    n = 3
+    n = 1
     N = 5
     ep_len = N if open_loop else 80
     spacing_policy = ConstantSpacingPolicy(50)

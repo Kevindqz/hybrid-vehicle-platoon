@@ -25,21 +25,19 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
     N: int,
     platoon: Platoon,
     pwa_systems: list[dict],
-    gear_choice: list[int],
     spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
     leader_index: int = 0,
     quadratic_cost: bool = True,
     thread_limit: int | None = None,
     accel_cnstr_tightening: float = 0.0,
     real_vehicle_as_reference: bool = False,
-    fuel_penalize: float = 0.0,
     ) -> None:
         MpcMldCentDecup.__init__(
             self, pwa_systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose=True
         ) # creates the state and control variables, sets the dynamics, and creates the MLD constraints for PWA dynamics
         self.n = n
         self.N = N
-        self.gear_choice = gear_choice
+        self.gear_choice : np.ndarray = np.zeros((len(Vehicle.b), self.N))
         F = block_diag(*[pwa_systems[i]["F"] for i in range(n)])
         G = np.vstack([pwa_systems[i]["G"] for i in range(n)])
         self.setup_gears(N, F, G)
@@ -47,13 +45,12 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             self.u,
             platoon,
             pwa_systems,
-            gear_choice,
+            self.gear_choice,
             spacing_policy,
             leader_index,
             quadratic_cost,
             accel_cnstr_tightening,
             real_vehicle_as_reference,
-            fuel_penalize,
         )
     
     #override the setup_cost_and_constraints method, with pre-decided gear choice from upstream RL agent
@@ -62,13 +59,12 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         u,
         platoon: Platoon,
         pwa_systems: list[dict],
-        gear_choice: list[int],
+        gear_choice: np.ndarray,
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
         leader_index: int = 0,
         quadratic_cost: bool = True,
         accel_cnstr_tightening: float = 0.0,
         real_vehicle_as_reference: bool = False,
-        fuel_penalize: float = 0.0,
     ):
         # overriding the method fuelMPCGear because for discrete input model delta don't exist.
         """Set up  cost and constraints for platoon tracking. Penalises the u passed in."""
@@ -93,7 +89,8 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         # Assign gear choice given by the RL agent to the control variable
         for i in range(len(Vehicle.b)):
             for k in range(self.N):
-                self.sigma[i, 0, k] = gear_choice[i, k]
+                self.sigma[i, 0, k].ub = gear_choice[i, k]
+                self.sigma[i, 0, k].lb = gear_choice[i, k]
 
         # cost func
         # leader_traj - gets updated each time step
@@ -294,5 +291,5 @@ class RlMpcAgent(MldAgent):
         self.mpc.set_leader_traj(self.leader_x[:, 0 : self.N + 1])
         return super().on_episode_start(env, episode, state)
     
-    def pass_gear_choice(self, gear_choice: list[int]) -> None:
+    def pass_gear_choice(self, gear_choice: np.ndarray) -> None:
         self.mpc.gear_choice = gear_choice
