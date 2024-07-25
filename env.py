@@ -215,6 +215,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
             else:
                 cost_fuel += sum(poly_b + poly_c * acc)
 
+
             total_cost = cost_fuel + cost_tracking
         # check for constraint violations
         if (
@@ -257,7 +258,6 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         r_total, r_tracking, r_fuel = self.get_stage_cost(self.x, u, j)
         self.cost_tracking_list.append(r_tracking)
-        self.cost_fuel_list.append(r_fuel)
         x_new = self.platoon.step_platoon(self.x, u, j, self.ts)
         self.x = x_new
 

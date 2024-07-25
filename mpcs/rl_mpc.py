@@ -37,7 +37,6 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         ) # creates the state and control variables, sets the dynamics, and creates the MLD constraints for PWA dynamics
         self.n = n
         self.N = N
-        self.gear_choice : np.ndarray = np.zeros((len(Vehicle.b), self.N))
         F = block_diag(*[pwa_systems[i]["F"] for i in range(n)])
         G = np.vstack([pwa_systems[i]["G"] for i in range(n)])
         self.setup_gears(N, F, G)
@@ -45,7 +44,6 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             self.u,
             platoon,
             pwa_systems,
-            self.gear_choice,
             spacing_policy,
             leader_index,
             quadratic_cost,
@@ -59,7 +57,6 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         u,
         platoon: Platoon,
         pwa_systems: list[dict],
-        gear_choice: np.ndarray,
         spacing_policy: SpacingPolicy = ConstantSpacingPolicy(50),
         leader_index: int = 0,
         quadratic_cost: bool = True,
@@ -87,10 +84,10 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         )
 
         # Assign gear choice given by the RL agent to the control variable
-        for i in range(len(Vehicle.b)):
-            for k in range(self.N):
-                self.sigma[i, 0, k].ub = gear_choice[i, k]
-                self.sigma[i, 0, k].lb = gear_choice[i, k]
+        # for i in range(len(Vehicle.b)):
+        #     for k in range(self.N):
+        #         self.sigma[i, 0, k].ub = gear_choice[i, k]
+        #         self.sigma[i, 0, k].lb = gear_choice[i, k]
 
         # cost func
         # leader_traj - gets updated each time step
@@ -215,7 +212,7 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
             [self.w * self.s[i, k] for i in range(self.n) for k in range(self.N + 1)]
         )
 
-        # add fuel consumption cost
+        # store fuel cost as list but not used in the cost function
         # cost += sum(
         #     epsilon[i, k] * fuel_penalize * f[i, k]
         #     for i in range(self.n)
@@ -291,5 +288,3 @@ class RlMpcAgent(MldAgent):
         self.mpc.set_leader_traj(self.leader_x[:, 0 : self.N + 1])
         return super().on_episode_start(env, episode, state)
     
-    def pass_gear_choice(self, gear_choice: np.ndarray) -> None:
-        self.mpc.gear_choice = gear_choice

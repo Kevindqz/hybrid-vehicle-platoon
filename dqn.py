@@ -86,15 +86,26 @@ class DqnAgent():
         eps_threshold = self.EPS_END + (self.EPS_START - self.EPS_END) * \
             math.exp(-1. * self.steps_done / self.EPS_DECAY)
         self.steps_done += 1
-        actions = torch.empty(state.size(0), state.size(1), dtype=torch.long, device=self.device)
-        for i in range(state.size(1)):
-            sample = random.random()
-            if sample > eps_threshold: # Should I do this for every time step?
-                with torch.no_grad():
-                    q_values = self.policy_net(state[:,i,:])
-                    actions[:,i] = q_values.argmax(1) - 1
-            else:  #this random action does not make sense
-                actions[:, i] = torch.tensor([random.randrange(self.n_actions) for _ in range(state.size(0))], device=self.device, dtype=torch.long) - 1
+        # actions = torch.empty(state.size(0), state.size(1), dtype=torch.long, device=self.device)
+        # for i in range(state.size(1)):
+        #     sample = random.random()
+        #     if sample > eps_threshold: # Should I do this for every time step?
+        #         with torch.no_grad():
+        #             q_values = self.policy_net(state[:,i,:])
+        #             actions[:,i] = q_values.argmax(1) - 1
+        #     else:  #this random action does not make sense
+        #         actions[:, i] = torch.tensor([random.randrange(self.n_actions) for _ in range(state.size(0))], device=self.device, dtype=torch.long) - 1
+        
+        #set seed
+        random.seed(0)
+        sample = random.random()
+        if sample > eps_threshold: # Should I do this for every time step?
+            with torch.no_grad():
+                q_values = self.policy_net(state)
+                actions = q_values.argmax(2)
+        else:  #this random action does not make sense
+            actions = torch.tensor([random.randrange(0,self.n_actions) for _ in range(state.size(1))], device=self.device, dtype=torch.long)
+            actions = actions.unsqueeze(0)
         return actions
     
     def plot_durations(self, show_result=False):
@@ -140,27 +151,28 @@ class DqnAgent():
                                                     if s is not None])
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
+        reward_batch = - torch.cat(batch.reward) # original is cost
 
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
-        state_action_values = self.policy_net(state_batch).gather(1, action_batch)
+        state_action_values = self.policy_net(state_batch).gather(2, action_batch.unsqueeze(2))
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
         # on the "older" target_net; selecting their best reward with max(1).values
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
-        next_state_values = torch.zeros(self.BATCH_SIZE, device=self.device)
+        next_state_values = torch.zeros(self.BATCH_SIZE, self.pred_horizon, device=self.device)
         with torch.no_grad():
-            next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1).values
-        # Compute the expected Q values
-        expected_state_action_values = (next_state_values * self.GAMMA) + reward_batch
+            next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(2).values
+
+        # Compute the expected Q values (Only first step of each sequence is used)
+        expected_state_action_values = (next_state_values[:,0] * self.GAMMA) + reward_batch
 
         # Compute Huber loss
         criterion = nn.SmoothL1Loss()
-        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+        loss = criterion(state_action_values[:,0,:], expected_state_action_values.unsqueeze(0))
 
         # Optimize the model
         self.optimizer.zero_grad()
@@ -181,7 +193,7 @@ class DqnAgent():
         for i_episode in range(num_episodes):
             # Initialize the environment and get its state
             state, _ = env.reset()
-            
+            mpc_agent.on_episode_start(env, i_episode, state) 
             # Initialize the Mpc agent and get its state，solved by mppc
             # pred_u = np.zeros((self.pred_horizon, 1))
             # pred_x = [state.squeeze(1)]
@@ -209,30 +221,42 @@ class DqnAgent():
             gear_choice_init_explicit = np.ones((self.pred_horizon, 1)) * j
             gear_choice_init_binary = np.zeros((self.n_gears, self.pred_horizon))
 
+            #set value for gear choice binary
             for i in range(self.pred_horizon):
                 gear_choice_init_binary[int(gear_choice_init_explicit[i])-1, i] = 1
 
-            mpc_agent.pass_gear_choice(gear_choice_init_binary)
-            u, info = mpc_agent.get_control(state) 
+            # solve mpc with initial gear choice
+            for i in range(len(Vehicle.b)):
+                for k in range(mpc_agent.mpc.N):
+                    mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_init_binary[i, k]
+                    mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_init_binary[i, k]
 
+            u, info = mpc_agent.get_control(state) 
+            pred_u = torch.tensor(info['u'].T, dtype=torch.float32, device=self.device).unsqueeze(0)
+            pred_x = torch.tensor(info['x'][:,:-1].T, dtype=torch.float32, device=self.device).unsqueeze(0)
+            pred_states = torch.cat((pred_x, pred_u), 2)
+            last_gear_choice_explicit = gear_choice_init_explicit
+
+            # Step the environment
+            observation, _ , terminated, truncated, rewards = env.step(u)
             for t in count():
-                last_pred_u = pred_u
                 
                 penalty = 0
 
                 action = self.select_action(pred_states) # state_seq: (batch_size, seq_length, input_size)
 
-                action_cpu = action.to('cpu')
+                gear_shift = action - 1
+                gear_shift = gear_shift.numpy()
+                gear_shift = gear_shift.T
+                
+                # Transform action to gear choice 
+                # doesnt make sense, should shift based on previous time step
+                # gear_choice_explicit = last_gear_choice_explicit + gear_shift.T 
+                gear_choice_explicit = np.ones((self.pred_horizon, 1))
+                gear_choice_explicit[0, 0] = last_gear_choice_explicit[0, 0] + gear_shift[0, 0]
+                for i in range(1, self.pred_horizon):
+                   gear_choice_explicit[i, 0] = gear_choice_explicit[i-1, 0] + gear_shift[i, 0]
 
-                # Transform action to numpy
-                action_numpy = action_cpu.numpy()
-                
-                # Transform action to gear choice
-                gear_choice_explicit = last_gear_choice_explicit + action_numpy.reshape(-1,1)
-                
-                gear_choice_binary = np.zeros((self.n_gears, self.pred_horizon))
-                for i in range(self.pred_horizon):
-                    gear_choice_binary[int(gear_choice_explicit[i])-1, i] = 1
 
                 # Check if gear choice is out of range，if so, use gear choice of last time step, give large penalty
                 for i in range(self.pred_horizon):
@@ -242,45 +266,61 @@ class DqnAgent():
                     elif gear_choice_explicit[i] > 6:
                         gear_choice_explicit[i] = 6
                         penalty += 100
+
+                gear_choice_binary = np.zeros((self.n_gears, self.pred_horizon))
+                for i in range(self.pred_horizon):
+                    gear_choice_binary[int(gear_choice_explicit[i])-1, i] = 1
+
+
                 
                 #Interface with Mpc agent
-                mpc_agent.pass_gear_choice(gear_choice_binary)
-                u, info = mpc_agent.get_control(state) 
-                u_and_gear = np.concatenate((u, gear_choice_explicit[0]), axis=1)
+                for i in range(len(Vehicle.b)):
+                    for k in range(mpc_agent.mpc.N):
+                        mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_binary[i, k]
+                        mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_binary[i, k]     
+
+                u, info = mpc_agent.get_control(observation) 
+
                 #check if mpc is infeasible, if so, use shifted prediction and action from last time step 
                 if info["cost"] == float('inf'):
                     penalty += 100
-                    u = last_pred_u[1]
-                    pred_u = last_pred_u[1:].append(last_pred_u[-1]) #shift prediction
-                    # gear_choice = last_gear_choice_binary[1:].append(last_gear_choice_binary[-1]) #shift gear choice
-                    u_and_gear = np.concatenate((u, gear_choice_explicit[1]), axis=1)
+                    gear_choice_explicit = np.concatenate((last_gear_choice_explicit[1:], last_gear_choice_explicit[[-1]]),0)
+                    gear_choice_binary = np.zeros((self.n_gears, self.pred_horizon))
+                    for i in range(self.pred_horizon):
+                        gear_choice_binary[int(gear_choice_explicit[i])-1, i] = 1
+
+                    for i in range(len(Vehicle.b)):
+                        for k in range(mpc_agent.mpc.N):
+                            mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_binary[i, k]
+                            # mpc_agent.mpc.sigma[i, 0, k].ub = 1
+                            mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_binary[i, k]
+                            # mpc_agent.mpc.sigma[i, 0, k].lb = 0
+                           
+
+                    u, info = mpc_agent.get_control(observation)                 
 
 
-                observation, _ , terminated, truncated, rewards = env.step(u_and_gear)
-               
-                fuel_cost = torch.tensor([rewards['fuel']], device=self.device) #only care about fuel
+                observation, _ , terminated, truncated, rewards = env.step(u)
+                mpc_agent.on_timestep_end(env, i_episode, t)
+                fuel_cost = torch.tensor([rewards['cost_fuel']], device=self.device) #only care about fuel
+
                 done = terminated or truncated
-
                 if terminated:
-                    next_state = None
+                    next_pred_states = None
                 else:
-                    _, info_next = mpc_agent.get_control(observation)
-                    pred_u_next = info_next['u']
-                    pred_x_next = info_next['x']
+                    pred_u_next = info['u']
+                    pred_x_next = info['x']
                     # transform the predicition to tensor
-                    pred_u_next = torch.tensor(pred_u_next, dtype=torch.float32, device=self.device).unsqueeze(0)
-                    pred_x_next = torch.tensor(pred_x_next, dtype=torch.float32, device=self.device).unsqueeze(0)
-                    # concatenate the state and action
-                    next_pred_states = torch.cat((pred_x_next, pred_u_next), 1)
-                    next_state = torch.tensor(observation, dtype=torch.float32, device=self.device).unsqueeze(0)
+                    pred_u_next = torch.tensor(info['u'].T, dtype=torch.float32, device=self.device).unsqueeze(0)
+                    pred_x_next = torch.tensor(info['x'][:,:-1].T, dtype=torch.float32, device=self.device).unsqueeze(0)
+                    next_pred_states = torch.cat((pred_x_next, pred_u_next), 2)
 
                 # Store the transition in memory
                 self.memory.push(pred_states, action, next_pred_states, fuel_cost + penalty) 
 
                 # Move to the next state
-                state = next_state
                 pred_states = next_pred_states
-                last_gear_choice_binary = gear_choice
+                last_gear_choice_explicit = gear_choice_explicit
 
                 # Perform one step of the optimization (on the policy network)
                 self.optimize_model()
@@ -357,6 +397,7 @@ def simulate(
         real_vehicle_as_reference=sim.real_vehicle_as_reference,
         quadratic_cost=sim.quadratic_cost,
     )
+
     mpcagent = RlMpcAgent(mpc, ep_len, N, leader_x)
 
     # train
