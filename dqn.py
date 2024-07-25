@@ -192,7 +192,7 @@ class DqnAgent():
 
         for i_episode in range(num_episodes):
             # Initialize the environment and get its state
-            state, _ = env.reset()
+            state, _ = env.reset(seed=i_episode)
             mpc_agent.on_episode_start(env, i_episode, state) 
             # Initialize the Mpc agent and get its state，solved by mppc
             # pred_u = np.zeros((self.pred_horizon, 1))
@@ -289,13 +289,16 @@ class DqnAgent():
                     for i in range(self.pred_horizon):
                         gear_choice_binary[int(gear_choice_explicit[i])-1, i] = 1
 
+                    n = 1
                     for i in range(len(Vehicle.b)):
-                        for k in range(mpc_agent.mpc.N):
+                        for k in range(n):
                             mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_binary[i, k]
                             # mpc_agent.mpc.sigma[i, 0, k].ub = 1
                             mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_binary[i, k]
                             # mpc_agent.mpc.sigma[i, 0, k].lb = 0
-                           
+                        for k in range(mpc_agent.mpc.N-n):
+                            mpc_agent.mpc.sigma[i, 0, k].ub = 1
+                            mpc_agent.mpc.sigma[i, 0, k].lb = 0
 
                     u, info = mpc_agent.get_control(observation)                 
 
