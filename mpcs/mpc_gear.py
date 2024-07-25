@@ -123,9 +123,9 @@ class MpcGear(MpcMld):
         self.sigma = self.sigma
         self.b = b
 
-    def solve_mpc(self, state, raises: bool = True):
+    def solve_mpc(self, state, raises: bool = True, try_again_if_infeasible: bool = False):
         """Solve mpc for gear and throttle."""
-        u_0, info = super().solve_mpc(state, raises=raises)
+        u_0, info = super().solve_mpc(state, raises=raises, try_again_if_infeasible=try_again_if_infeasible)
         if self.mpc_model.Status == 2:  # check for successful solve
             u_g = self.u_g.X
             sig = self.sigma.X

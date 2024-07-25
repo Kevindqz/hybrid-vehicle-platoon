@@ -20,6 +20,9 @@ from gymnasium.wrappers import TimeLimit
 from mpcrl.wrappers.envs import MonitorEpisodes
 from models import Vehicle, Platoon
 
+#set seed
+random.seed(1)
+
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
 
@@ -96,8 +99,7 @@ class DqnAgent():
         #     else:  #this random action does not make sense
         #         actions[:, i] = torch.tensor([random.randrange(self.n_actions) for _ in range(state.size(0))], device=self.device, dtype=torch.long) - 1
         
-        #set seed
-        random.seed(0)
+        
         sample = random.random()
         if sample > eps_threshold: # Should I do this for every time step?
             with torch.no_grad():
@@ -192,7 +194,7 @@ class DqnAgent():
 
         for i_episode in range(num_episodes):
             # Initialize the environment and get its state
-            state, _ = env.reset(seed=i_episode)
+            state, _ = env.reset(seed=i_episode+20)
             mpc_agent.on_episode_start(env, i_episode, state) 
             # Initialize the Mpc agent and get its state，solved by mppc
             # pred_u = np.zeros((self.pred_horizon, 1))
@@ -279,7 +281,7 @@ class DqnAgent():
                         mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_binary[i, k]
                         mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_binary[i, k]     
 
-                u, info = mpc_agent.get_control(observation) 
+                u, info = mpc_agent.get_control(observation, try_again_if_infeasible=False)
 
                 #check if mpc is infeasible, if so, use shifted prediction and action from last time step 
                 if info["cost"] == float('inf'):
@@ -289,18 +291,21 @@ class DqnAgent():
                     for i in range(self.pred_horizon):
                         gear_choice_binary[int(gear_choice_explicit[i])-1, i] = 1
 
-                    n = 1
+                    if not np.all(np.sum(gear_choice_binary, axis=0) == 1):
+                        raise ValueError("gear binaries not correctly set!") 
+                    o = 5
                     for i in range(len(Vehicle.b)):
-                        for k in range(n):
-                            mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_binary[i, k]
-                            # mpc_agent.mpc.sigma[i, 0, k].ub = 1
+                        for k in range(mpc_agent.mpc.N):
+                            mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_binary[i, k] 
                             mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_binary[i, k]
-                            # mpc_agent.mpc.sigma[i, 0, k].lb = 0
-                        for k in range(mpc_agent.mpc.N-n):
-                            mpc_agent.mpc.sigma[i, 0, k].ub = 1
-                            mpc_agent.mpc.sigma[i, 0, k].lb = 0
+                        # for k in range(o, mpc_agent.mpc.N):
+                        #     mpc_agent.mpc.sigma[i, 0, k].ub = 1
+                        #     mpc_agent.mpc.sigma[i, 0, k].lb = 0
+                           
 
-                    u, info = mpc_agent.get_control(observation)                 
+                    u, info = mpc_agent.get_control(observation, try_again_if_infeasible=False)     
+                    if info["cost"] == float('inf'):
+                        raise RuntimeError("Backup gear solution was still infeasible, reconsider theory. Oh no.")            
 
 
                 observation, _ , terminated, truncated, rewards = env.step(u)
