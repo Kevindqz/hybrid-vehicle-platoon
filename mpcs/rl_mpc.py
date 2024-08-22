@@ -33,7 +33,7 @@ class RlMpcCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
     real_vehicle_as_reference: bool = False,
     ) -> None:
         MpcMldCentDecup.__init__(
-            self, pwa_systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose=True
+            self, pwa_systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose=False
         ) # creates the state and control variables, sets the dynamics, and creates the MLD constraints for PWA dynamics
         self.n = n
         self.N = N
@@ -282,7 +282,7 @@ class RlMpcAgent(MldAgent):
         self.solve_times[env.step_counter - 1, :] = self.run_time
         self.node_counts[env.step_counter - 1, :] = self.node_count
         self.bin_var_counts[env.step_counter - 1, :] = self.num_bin_vars
-        return super().on_timestep_end(env, episode, timestep)
+        return super().on_timestep_end(env, episode, timestep) 
 
     def on_episode_start(self, env: Env, episode: int, state) -> None:
         self.mpc.set_leader_traj(self.leader_x[:, 0 : self.N + 1])

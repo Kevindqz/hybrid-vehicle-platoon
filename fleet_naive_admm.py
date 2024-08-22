@@ -679,12 +679,19 @@ def simulate(
         U = np.squeeze(env.ep_actions)
         R = np.squeeze(env.ep_rewards)
 
+    r_tracking = env.unwrapped.cost_tracking_list
+    r_fuel = env.unwrapped.cost_fuel_list
+    acc = env.unwrapped.acc_list
+    r_tracking = np.array(r_tracking).squeeze()
+    r_fuel = np.array(r_fuel).squeeze()
+    acc = np.array(acc).squeeze()
+
     print(f"Return = {sum(R.squeeze())}")
     print(f"Violations = {env.unwrapped.viol_counter}")
     print(f"Run_times_sum: {sum(agent.solve_times)}")
 
     if plot:
-        plot_fleet(n, X, U, R, leader_x, violations=env.unwrapped.viol_counter[0])
+        plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_x, violations=env.unwrapped.viol_counter[0])
 
     if save:
         with open(

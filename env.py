@@ -176,6 +176,8 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
             [self.cost_func(u[i] - u_p[i], self.Q_du) for i in range(self.n)]
         )
 
+        cost_tracking = cost_tracking.item()
+
         # fuel consumption cost
         vehicles = self.platoon.get_vehicles()
         coefficients_b = [
@@ -258,11 +260,12 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         r_total, r_tracking, r_fuel = self.get_stage_cost(self.x, u, j)
         self.cost_tracking_list.append(r_tracking)
+        self.cost_fuel_list.append(r_fuel)
         x_new = self.platoon.step_platoon(self.x, u, j, self.ts)
         self.x = x_new
 
         self.step_counter += 1
-        print(f"step {self.step_counter}")
+        # print(f"step {self.step_counter}")
         return x_new, r_total, False, False, {"cost_tracking": r_tracking, "cost_fuel": r_fuel}
 
     def get_state(self):
