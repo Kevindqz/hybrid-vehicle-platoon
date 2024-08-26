@@ -21,6 +21,7 @@ from gymnasium.wrappers import TimeLimit
 from mpcrl.wrappers.envs import MonitorEpisodes
 from models import Vehicle, Platoon
 import pickle
+from fleet_cent_mld import MpcGearCent
 from plot_fleet import plot_fleet
 #set seed
 random.seed(1)
@@ -294,8 +295,8 @@ class DqnAgent():
 
         for i_episode in range(num_episodes):
             # Initialize the environment and get its state
-            # state, _ = env.reset(seed = i_episode)
-            state, _ = env.reset(seed = 1)
+            state, _ = env.reset(seed = i_episode)
+            # state, _ = env.reset(seed = 1)
             mpc_agent.on_episode_start(env, i_episode, state) 
 
             # Initialize the Mpc agent and get its state，solved by mppc
@@ -449,7 +450,7 @@ class DqnAgent():
                 penalty = torch.tensor([penalty], device=self.device)
                 total_reward += float(fuel_cost) + float(tracking_cost) + float(penalty)
                 # total_reward += float(tracking_cost) + float(penalty)
-                current_reward = penalty + tracking_cost
+                current_reward = penalty + tracking_cost + fuel_cost
                 total_tracking_cost += float(tracking_cost)
                 total_fuel_cost += float(fuel_cost)
                 total_penalty += float(penalty)
@@ -574,7 +575,7 @@ class DqnAgent():
         for episode, current_seed in zip(range(num_episodes), seeds):
             mpc_agent.reset(current_seed)
             # state, _ = env.reset(seed=current_seed, options=env_reset_options)
-            state, _ = env.reset(seed = 1)
+            state, _ = env.reset(seed = current_seed)
             truncated, terminated, timestep = False, False, 0
 
             mpc_agent.on_episode_start(env, episode, state)
@@ -858,11 +859,11 @@ def simulate(
             max_episode_steps=ep_len,
         )
     )
-    rlagent = DqnAgent(256, 0.9, 0.999, 0.00, 60000, 0.001, 0.001, "cuda")
-    mpc = RlMpcCent(
+    rlagent = DqnAgent(256, 0.9, 0.999, 0.00, 600000, 0.001, 0.001, "cuda")
+
+    mpc = MpcGearCent(
         n,
         N,
-        platoon,
         systems,
         spacing_policy=spacing_policy,
         leader_index=leader_index,
@@ -870,19 +871,31 @@ def simulate(
         real_vehicle_as_reference=sim.real_vehicle_as_reference,
         quadratic_cost=sim.quadratic_cost,
     )
+    # mpc = RlMpcCent(
+    #     n,
+    #     N,
+    #     platoon,
+    #     systems,
+    #     spacing_policy=spacing_policy,
+    #     leader_index=leader_index,
+    #     thread_limit=thread_limit,
+    #     real_vehicle_as_reference=sim.real_vehicle_as_reference,
+    #     quadratic_cost=sim.quadratic_cost,
+    # )
 
     mpcagent = RlMpcAgent(mpc, ep_len, N, leader_x)
 
     # train or evaluate
     if mode == "train":
-        rlagent.train(env, mpcagent, 5000)
-        rlagent.save_model('trained_dqn_agent_with_tracking_cost.pth')
+        rlagent.train(env, mpcagent, 50000)
+        rlagent.save_model('trained_dqn_agent_new.pth')
     elif mode == "evaluate":
-        rlagent.load_model('trained_dqn_agent_with_tracking_cost.pth')
-        returns = rlagent.evaluate(env, mpcagent, 1)
+        rlagent.load_model('trained_dqn_agent_new.pth')
+        returns = rlagent.evaluate(env, mpcagent, 10)
         print(f"Average return: {np.mean(returns)}")
 
     
 
 if __name__ == "__main__":
     simulate(Sim(), save=False, leader_index=0, mode="evaluate")
+ 

@@ -34,7 +34,7 @@ class Sim:
     fuel_penalize: float = 0
     n = 1
     N = 5
-    ep_len = N if open_loop else 100
+    ep_len = N if open_loop else 80
     spacing_policy = ConstantSpacingPolicy(50)
     leader_trajectory = ConstantVelocityLeaderTrajectory(
         p=3000, v=20, trajectory_len=ep_len + 50, ts=Params.ts
