@@ -212,7 +212,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
             )
 
             # no fuel consumption if vehicle is decelerating
-            if u[i][0] < 0 or acc < 0:
+            if u[i][0] < 0:
                 cost_fuel += 0
             else:
                 cost_fuel += sum(poly_b + poly_c * acc)
