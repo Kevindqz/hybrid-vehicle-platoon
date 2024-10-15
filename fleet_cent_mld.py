@@ -6,6 +6,7 @@ from dmpcpwa.mpc.mpc_mld import MpcMld
 from dmpcpwa.mpc.mpc_mld_cent_decup import MpcMldCentDecup
 from gymnasium import Env
 from gymnasium.wrappers import TimeLimit
+from mpcrl import Agent
 from mpcrl.wrappers.envs import MonitorEpisodes
 from scipy.linalg import block_diag
 
@@ -77,6 +78,30 @@ class MpcNonlinearGearCent(MpcMldCent, MpcNonlinearGear):
 
 
 class TrackingCentralizedAgent(MldAgent):
+    def __init__(self, mpc: MpcMld, ep_len: int, N: int, leader_x: np.ndarray) -> None:
+        self.ep_len = ep_len
+        self.N = N
+        self.leader_x = leader_x
+
+        self.solve_times = np.zeros((ep_len, 1))
+        self.node_counts = np.zeros((ep_len, 1))
+        self.bin_var_counts = np.zeros((ep_len, 1))
+        super().__init__(mpc)
+
+    def on_timestep_end(self, env: Env, episode: int, timestep: int) -> None:
+        # time step starts from 1, so this will set the cost accurately for the next time-step
+        self.mpc.set_leader_traj(self.leader_x[:, timestep : (timestep + self.N + 1)])
+        self.solve_times[env.step_counter - 1, :] = self.run_time
+        self.node_counts[env.step_counter - 1, :] = self.node_count
+        self.bin_var_counts[env.step_counter - 1, :] = self.num_bin_vars
+        return super().on_timestep_end(env, episode, timestep)
+
+    def on_episode_start(self, env: Env, episode: int, state) -> None:
+        self.mpc.set_leader_traj(self.leader_x[:, 0 : self.N + 1])
+        return super().on_episode_start(env, episode, state)
+
+
+class TrackingCentralizedAgentNew(Agent):
     def __init__(self, mpc: MpcMld, ep_len: int, N: int, leader_x: np.ndarray) -> None:
         self.ep_len = ep_len
         self.N = N

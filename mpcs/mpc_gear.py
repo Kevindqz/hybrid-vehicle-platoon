@@ -34,7 +34,6 @@ class MpcGear(MpcMld):
             N,
             thread_limit=thread_limit,
             constrain_first_state=constrain_first_state,
-            verbose=True,
         )
         self.sigma: gp.Var | None = None
     def setup_gears(self, N: int, F: np.ndarray, G: np.ndarray):
