@@ -15,11 +15,10 @@ from misc.spacing_policy import ConstantSpacingPolicy, SpacingPolicy
 from models import Platoon
 from mpcs.cent_mld import MpcMldCent
 from mpcs.mpc_gear import MpcGear, MpcNonlinearGear
-
 # from mpcs.mpc_gear import MpcGear
 from plot_fleet import plot_fleet
-
-np.random.seed(2)
+import matplotlib.pyplot as plt
+# np.random.seed(19)
 
 
 class MpcGearCent(MpcMldCent, MpcMldCentDecup, MpcGear):
@@ -180,8 +179,8 @@ def simulate(
     # agent
     agent = TrackingCentralizedAgent(mpc, ep_len, N, leader_x)
 
-    agent.evaluate(env=env, episodes=1, seed=seed, open_loop=sim.open_loop)
-
+    agent.evaluate(env=env, episodes= 1, seed=seed, open_loop=sim.open_loop)
+    leader_x = agent.leader_x
     if len(env.observations) > 0:
         X = env.observations[0].squeeze()
         U = env.actions[0].squeeze()
@@ -191,27 +190,53 @@ def simulate(
         U = np.squeeze(env.ep_actions)
         R = np.squeeze(env.ep_rewards)
 
-    print(f"Return = {sum(R.squeeze())}")
-    print(f"Violations = {env.unwrapped.viol_counter}")
-    print(f"Run_times_sum: {sum(agent.solve_times)}")
-    print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
+    # print(f"Return = {sum(R.squeeze())}")
+    # print(f"Violations = {env.unwrapped.viol_counter}")
+    # print(f"Run_times_sum: {sum(agent.solve_times)}")
+    # print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
+
+    # grab individual costs
+    r_tracking = env.unwrapped.cost_tracking_list
+    r_fuel = env.unwrapped.cost_fuel_list
+    acc = env.unwrapped.acc_list
+    r_tracking = np.array(r_tracking).squeeze()
+    r_fuel = np.array(r_fuel).squeeze()
+    acc = np.array(acc).squeeze()
 
     if plot:
-        plot_fleet(n, X, U, R, leader_x, violations=env.unwrapped.viol_counter[0])
+        plot_fleet(n, X, U, R, r_tracking, r_fuel, leader_x, violations=env.unwrapped.viol_counter[0])
+        plt.show()
+
+    # if save:
+    #     with open(
+    #         f"cent_{sim.id}_seed_{seed}" + ".pkl",
+    #         "wb",
+    #     ) as file:
+    #         pickle.dump(X, file)
+    #         pickle.dump(U, file)
+    #         pickle.dump(R, file)
+    #         pickle.dump(r_tracking, file)
+    #         pickle.dump(r_fuel, file)
+    #         pickle.dump(agent.solve_times, file)
+    #         pickle.dump(agent.node_counts, file)
+    #         pickle.dump(env.unwrapped.viol_counter[0], file)
+    #         pickle.dump(leader_x, file)
+
+    purempc_data = {
+        "X": X,
+        "U": U,
+        "R": R,
+        "r_tracking": r_tracking,
+        "r_fuel": r_fuel,
+    }
 
     if save:
         with open(
-            f"cent_{sim.id}_seed_{seed}" + ".pkl",
+            'purempc_data.pkl',
             "wb",
         ) as file:
-            pickle.dump(X, file)
-            pickle.dump(U, file)
-            pickle.dump(R, file)
-            pickle.dump(agent.solve_times, file)
-            pickle.dump(agent.node_counts, file)
-            pickle.dump(env.unwrapped.viol_counter[0], file)
-            pickle.dump(leader_x, file)
+            pickle.dump(purempc_data, file)
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=False, seed=3, leader_index=0)
+    simulate(Sim(), save=True, plot = True, seed= Sim.seed, leader_index=0)

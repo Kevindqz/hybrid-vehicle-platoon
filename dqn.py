@@ -1,3 +1,4 @@
+import time
 from typing import Any
 from dmpcpwa.mpc.mpc_mld import MpcMld
 import gymnasium as gym
@@ -23,8 +24,11 @@ from models import Vehicle, Platoon
 import pickle
 from fleet_cent_mld import MpcGearCent
 from plot_fleet import plot_fleet
+from fleet_cent_mld import TrackingCentralizedAgent
+import wandb
 #set seed
-random.seed(1)
+# np.random.seed(19)
+# random.seed(1)
 
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
@@ -51,14 +55,20 @@ class DRQN(nn.Module):
 
     def __init__(self, input_size, hidden_size, num_actions = 3, num_layers=1): # three actions : downshift, no shift, upshift
         super(DRQN, self).__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers, batch_first=True, bidirectional=True)
-        self.fc = nn.Linear(hidden_size*2, num_actions)
 
+        # self.fc1 = nn.Linear(input_size, hidden_size*4)
+        # self.rnn = nn.GRU(hidden_size*4, hidden_size, num_layers, batch_first=True, bidirectional=True)
+        # self.fc2 = nn.Linear(hidden_size*2, num_actions)
+
+        self.fc = nn.Linear(hidden_size*2, num_actions)
+        self.rnn = nn.RNN(input_size, hidden_size, num_layers, batch_first=True, bidirectional=True)
     def forward(self, x):
-        # x: (batch_size, seq_length, input_size)
-        drqn_out, _ = self.rnn(x)  # lstm_out: (batch_size, seq_length, hidden_size)
-        # Apply the fully connected layer to each time step
-        q_values = self.fc(drqn_out)  # q_values: (batch_size, seq_length, num_actions)
+        # fc_out = self.fc1(x)      
+        # drqn_out, _ = self.rnn(fc_out)
+        # q_values = self.fc2(drqn_out)
+
+        drqn_out, _ = self.rnn(x)
+        q_values = self.fc(drqn_out)
         return q_values
 
 class DqnAgent():
@@ -73,19 +83,21 @@ class DqnAgent():
         self.LEARNING_RATE = learning_rate
         self.device = device
 
+        self.n_layers = 2
         self.n_states = 4 # 3 states: position, velocity, gear, 1 action
         # self.n_states = 3 # 3 states: velocity, gear, 1 action
-        self.n_hidden = 128
+        self.n_hidden = 64
         self.n_actions = 3
         self.n_gears = 6
         self.pred_horizon = 5
         self.ts = Params.ts
-        self.policy_net = DRQN(self.n_states, self.n_hidden).to(self.device)
-        self.target_net = DRQN(self.n_states, self.n_hidden).to(self.device)
+        self.policy_net = DRQN(self.n_states, self.n_hidden, self.n_actions, self.n_layers).to(self.device)
+        self.target_net = DRQN(self.n_states, self.n_hidden, self.n_actions, self.n_layers).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.LEARNING_RATE, amsgrad=True)
-        self.memory = ReplayMemory(10000)
+        self.memory_size = 100000
+        self.memory = ReplayMemory(self.memory_size)
         self.steps_done = 0
         self.episode_durations = []
         self.episode_rewards = []
@@ -94,6 +106,11 @@ class DqnAgent():
         self.penalties = []
         self.gear_violations = []
         self.infeasibilities = []
+        self.performance = []
+        self.runtimes = []
+
+        self.fuel_param = 1
+        self.tracking_param = 0.001
 
     def select_action(self, state, mode):
         if mode == 'train':
@@ -113,6 +130,31 @@ class DqnAgent():
         else:  #this random action does not make sense
             actions = torch.tensor([random.randrange(0,self.n_actions) for _ in range(state.size(1))], device=self.device, dtype=torch.long)
             actions = actions.unsqueeze(0)
+        
+        # calculate the gear choice by time step and avoid gear violation      
+        # actions = torch.zeros((1, self.pred_horizon), device=self.device, dtype=torch.int64)
+        # current_gear = state[0, 0, 3]
+        # hidden = None 
+        # if sample > eps_threshold:
+        #     with torch.no_grad():
+        #         for i in range(self.pred_horizon):
+        #             # feed the state to network one by one
+        #             q_values, hidden = self.policy_net(state[:, i, :].unsqueeze(1), hidden)
+        #             if current_gear == 6: # if current gear is 6, upshift is not allowed
+        #                 q_values[0, 0, 2] = -float('inf')
+        #             elif current_gear == 1: # if current gear is 1, downshift is not allowed
+        #                 q_values[0, 0, 0] = -float('inf')
+        #             actions[0, i] = q_values.argmax(2)
+        #             current_gear = current_gear + actions[0, i].item() - 1
+        # else:
+        #     for i in range(self.pred_horizon):
+        #         if current_gear == 6:
+        #             actions[0, i] = random.choice([0, 1])
+        #         elif current_gear == 1:
+        #             actions[0, i] = random.choice([1, 2])
+        #         else:
+        #             actions[0, i] = random.randrange(0, self.n_actions)
+        #         current_gear = current_gear + actions[0, i].item() - 1
         return actions
 
     def plot_rewards(self, show_result=False):        
@@ -124,14 +166,16 @@ class DqnAgent():
             plt.clf()
             plt.title('Training...')
         plt.xlabel('Episode')
-        plt.ylabel('Total Reward')
+        plt.ylabel('Total Cost')
         plt.plot(rewards_t.numpy())
         if len(rewards_t) >= 100:
             means = rewards_t.unfold(0, 100, 1).mean(1).view(-1)
             means = torch.cat((rewards_t.cumsum(0)[:99] / torch.arange(1, 100), means))
         else:
             means =  rewards_t.cumsum(0) / torch.arange(1, len(rewards_t) + 1)
+
         plt.plot(means.numpy())
+        plt.savefig(f'cost_fuel_{self.fuel_param}_tracking_{self.tracking_param}.png')
         plt.pause(0.001)    
     
     def plot_gear_violation(self, show_result=False):
@@ -145,12 +189,13 @@ class DqnAgent():
         plt.xlabel('Episode')
         plt.ylabel('Gear Violations')
         plt.plot(penalties_t.numpy())
-        if len(penalties_t) >= 100:
-            means = penalties_t.unfold(0, 100, 1).mean(1).view(-1)
-            means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
-        else:
-            means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
-        plt.plot(means.numpy())
+        # if len(penalties_t) >= 100:
+        #     means = penalties_t.unfold(0, 100, 1).mean(1).view(-1)
+        #     means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
+        # else:
+        #     means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
+        # plt.plot(means.numpy())
+        plt.savefig(f'gear_violation_fuel_{self.fuel_param}_tracking_{self.tracking_param}.png')
         plt.pause(0.001)
 
     def plot_infeasibility(self, show_result=False):
@@ -164,16 +209,17 @@ class DqnAgent():
         plt.xlabel('Episode')
         plt.ylabel('Infeasibilities')
         plt.plot(penalties_t.numpy())
-        if len(penalties_t) >= 100:
-            means = penalties_t.unfold(0, 100, 1).mean(1).view(-1)
-            means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
-        else:
-            means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
-        plt.plot(means.numpy())
+        # if len(penalties_t) >= 100:
+        #     means = penalties_t.unfold(0, 100, 1).mean(1).view(-1)
+        #     means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
+        # else:
+        #     means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
+        # plt.plot(means.numpy())
+        plt.savefig(f'infeasibility_fuel_{self.fuel_param}_tracking_{self.tracking_param}.png')
         plt.pause(0.001)
 
     def plot_tracking_cost(self, show_result=False):
-        plt.figure(5)
+        fig = plt.figure(5)
         penalties_t = torch.tensor(self.tracking_costs, dtype=torch.float)
         if show_result:
             plt.title('Result')
@@ -188,8 +234,11 @@ class DqnAgent():
             means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
         else:
             means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
+
         plt.plot(means.numpy())
+        plt.savefig(f'tracking_cost_fuel_{self.fuel_param}_tracking_{self.tracking_param}.png')
         plt.pause(0.001)
+        return fig
     
     def plot_fuel_cost(self, show_result=False):   
         plt.figure(6)
@@ -207,7 +256,9 @@ class DqnAgent():
             means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
         else:
             means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
+
         plt.plot(means.numpy())
+        plt.savefig(f'fuel_cost_fuel_{self.fuel_param}_tracking_{self.tracking_param}.png')
         plt.pause(0.001)
     
     def plot_penalties(self, show_result=False):
@@ -226,7 +277,9 @@ class DqnAgent():
             means = torch.cat((penalties_t.cumsum(0)[:99] / torch.arange(1, 100), means))
         else:
             means = penalties_t.cumsum(0) / torch.arange(1, len(penalties_t) + 1)
+
         plt.plot(means.numpy())
+        plt.savefig(f'penalties_fuel_{self.fuel_param}_tracking_{self.tracking_param}.png')
         plt.pause(0.001)
 
     def optimize_model(self):
@@ -252,7 +305,7 @@ class DqnAgent():
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
-        state_action_values = self.policy_net(state_batch).gather(2, action_batch.unsqueeze(2))
+        state_action_values  = self.policy_net(state_batch).gather(2, action_batch.unsqueeze(2))
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
@@ -284,20 +337,37 @@ class DqnAgent():
         torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
         self.optimizer.step()
 
-    def train(self, env: PlatoonEnv, mpc_agent: RlMpcAgent, num_episodes: int):
+    def train(self, env: PlatoonEnv, mpc_agent: RlMpcAgent, num_episodes: int, seed: int, save: bool = True):
         """
         This method trains the DQN agent with the given environment and Mpc agent.
         """
-        # if torch.cuda.is_available():
-        #     num_episodes = 10000
-        # else:
-        #     num_episodes = 15000
 
-        for i_episode in range(num_episodes):
+        wandb.init(project="DRQN-MPC",
+                config={"architecture": "rnn",
+                        "num_rnn_layers": self.n_layers,
+                        "hidden_size": self.n_hidden,
+                        "episodes": num_episodes,
+                        "learning_rate": self.LEARNING_RATE, 
+                        "gamma": self.GAMMA, 
+                        "batch_size": self.BATCH_SIZE, 
+                        "target_update": self.tau,
+                        "tracking_param": self.tracking_param,
+                        "fuel_param": self.fuel_param,
+                        "eps_start": self.EPS_START,
+                        "eps_end": self.EPS_END,
+                        "memory_size": self.memory_size,
+                        "seed": seed
+                        })
+                   
+        seeds = map(int, np.random.SeedSequence(seed).generate_state(num_episodes))
+        for episode, current_seed in zip(range(num_episodes), seeds):
             # Initialize the environment and get its state
-            state, _ = env.reset(seed = i_episode)
-            # state, _ = env.reset(seed = 1)
-            mpc_agent.on_episode_start(env, i_episode, state) 
+            state, info = env.reset(seed = current_seed)
+            # state, _ = env.reset(seed = 23)
+            # get new reference trajectory
+            mpc_agent.leader_x = info['leader_trajectory']
+
+            mpc_agent.on_episode_start(env, episode, state) 
 
             # Initialize the Mpc agent and get its state，solved by mppc
             vehicle = env.platoon.get_vehicles()
@@ -346,15 +416,17 @@ class DqnAgent():
 
             # Step the environment
             observation, _ , terminated, truncated, rewards = env.step(u)
-            mpc_agent.on_env_step(env, i_episode, timestep)
-            total_reward += float(rewards['cost_fuel']) + float(rewards['cost_tracking'])
-            total_tracking_cost += float(rewards['cost_tracking'])
-            total_fuel_cost += float(rewards['cost_fuel'])
+            mpc_agent.on_env_step(env, episode, timestep)
+            tracking_cost = self.tracking_param * float(rewards['cost_tracking'])
+            fuel_cost = self.fuel_param * float(rewards['cost_fuel'])
+            total_reward += tracking_cost + fuel_cost
+            total_tracking_cost += self.tracking_param * float(rewards['cost_tracking'])
+            total_fuel_cost += self.fuel_param * float(rewards['cost_fuel'])
 
             timestep += 1
 
             # Set new reference trajectory
-            mpc_agent.on_timestep_end(env, i_episode, timestep)
+            mpc_agent.on_timestep_end(env, episode, timestep)
 
             while not (terminated or truncated):
                 
@@ -435,6 +507,8 @@ class DqnAgent():
                                 mpc_agent.mpc.sigma[i, 0, k].ub = gear_choice_init_binary[i, k]
                                 mpc_agent.mpc.sigma[i, 0, k].lb = gear_choice_init_binary[i, k]
 
+                        gear_choice_explicit = gear_choice_init_explicit
+
                         u, info = mpc_agent.get_control(observation, try_again_if_infeasible=False) 
 
                         if info['cost'] == float('inf'):
@@ -442,15 +516,16 @@ class DqnAgent():
 
 
                 observation, _ , terminated, truncated, rewards = env.step(u)
-                mpc_agent.on_env_step(env, i_episode, timestep)
+                mpc_agent.on_env_step(env, episode, timestep)
 
 
-                fuel_cost = torch.tensor([rewards['cost_fuel']], device=self.device) #only care about fuel
-                tracking_cost = 0.001 * torch.tensor([rewards['cost_tracking']], device=self.device)
+                fuel_cost = self.fuel_param * torch.tensor([rewards['cost_fuel']], device=self.device) #only care about fuel
+                tracking_cost =self.tracking_param * torch.tensor([rewards['cost_tracking']], device=self.device)
                 penalty = torch.tensor([penalty], device=self.device)
                 total_reward += float(fuel_cost) + float(tracking_cost) + float(penalty)
                 # total_reward += float(tracking_cost) + float(penalty)
                 current_reward = penalty + tracking_cost + fuel_cost
+                # current_reward = penalty + 0.001 * tracking_cost
                 total_tracking_cost += float(tracking_cost)
                 total_fuel_cost += float(fuel_cost)
                 total_penalty += float(penalty)
@@ -488,7 +563,7 @@ class DqnAgent():
                 last_gear_choice_explicit = gear_choice_explicit
 
                 timestep += 1
-                mpc_agent.on_timestep_end(env, i_episode, timestep)
+                mpc_agent.on_timestep_end(env, episode, timestep)
                 
                 # Perform one step of the optimization (on the policy network)
                 self.optimize_model()
@@ -511,22 +586,30 @@ class DqnAgent():
                     # self.plot_rewards()
                     # self.plot_gear_violation()
                     # self.plot_infeasibility()
-                    print(f"Episode {i_episode}, total cost: {total_reward}")
-                    mpc_agent.on_episode_end(env, i_episode, total_reward)
+                    print(f"Episode {episode}, tracking cost: {total_tracking_cost}, fuel cost: {total_fuel_cost}, penalty: {total_penalty}, gear violation: {gear_violation_count}, infeasibility: {infeasibility_count}, total cost: {total_reward}")
+
+                    wandb.log({"tracking_cost": total_tracking_cost, 
+                               "fuel_cost": total_fuel_cost, 
+                               "penalty": total_penalty, 
+                               "total_cost": total_reward, 
+                               "gear_violations": gear_violation_count, 
+                               "infeasibilities": infeasibility_count})
+                    
+                    mpc_agent.on_episode_end(env, episode, total_reward)
                     break
 
                 # add checkpoints for every 10000 episodes
-                if i_episode % 10000 == 0:
-                    self.save_model(f'checkpoint_{i_episode}.pt')
+                # if i_episode % 10000 == 0:
+                #     self.save_model(f'checkpoint_{i_episode}.pt')
                    
         print('Complete')
-
+        wandb.finish()
         # Use a dictionary to store all the data
         train_data = {}
 
-        X = list(env.observations)
-        U = list(env.actions)
-        R = list(env.rewards)
+        # X = list(env.observations)
+        # U = list(env.actions)
+        # R = list(env.rewards)
 
         train_data['states'] = list(env.observations)
         train_data['actions'] = list(env.actions)
@@ -544,7 +627,10 @@ class DqnAgent():
 
         env.close()
 
-        # Plot the results
+        if save:
+            self.save_model('trained_dqn_agent_full_complexity_best_setup.pth')
+
+        # Plot the results and save the figures
         self.plot_rewards()
         self.plot_gear_violation()
         self.plot_infeasibility()
@@ -561,22 +647,44 @@ class DqnAgent():
         self.policy_net.load_state_dict(torch.load(path))
 
     def evaluate(self, env: PlatoonEnv, 
-                 mpc_agent: RlMpcAgent, 
+                 mpc_agent: TrackingCentralizedAgent, 
                  num_episodes: int, 
-                 env_reset_options: dict[str, Any] = None, 
                  seed: int = None,
                  open_loop: bool = False,
+                 save: bool = False,
+                 plot: bool = False,
         ):
         self.policy_net.eval()
         returns = np.zeros(num_episodes)
         mpc_agent.on_validation_start(env)
         seeds = map(int, np.random.SeedSequence(seed).generate_state(num_episodes))
 
+        if num_episodes > 1:
+            wandb.init(project="DRQN-MPC-EVAL",
+                config={"architecture": "rnn",
+                        "episodes": num_episodes,
+                        "num_rnn_layers": self.n_layers,
+                        "hidden_size": self.n_hidden,
+                        "learning_rate": self.LEARNING_RATE, 
+                        "gamma": self.GAMMA, 
+                        "batch_size": self.BATCH_SIZE, 
+                        "target_update": self.tau,
+                        "tracking_param": self.tracking_param,
+                        "fuel_param": self.fuel_param,
+                        })
+        
         for episode, current_seed in zip(range(num_episodes), seeds):
+            start_time = time.time()
+
+            total_runtime = 0
+            total_tracking_cost = 0
+            total_fuel_cost = 0
             mpc_agent.reset(current_seed)
             # state, _ = env.reset(seed=current_seed, options=env_reset_options)
-            state, _ = env.reset(seed = current_seed)
+            state, info = env.reset(seed = current_seed)
             truncated, terminated, timestep = False, False, 0
+            
+            mpc_agent.leader_x = info['leader_trajectory']
 
             mpc_agent.on_episode_start(env, episode, state)
 
@@ -620,13 +728,19 @@ class DqnAgent():
             total_reward = 0
             gear_violation_count = 0
             infeasibility_count = 0
+            performance = 0
+            gear_violation = [0]
+            infeasibility = [0]
+
             timestep = 0
 
             # Step the environment
-            state, _ , terminated, truncated, rewards = env.step(u)
+            state, r , terminated, truncated, rewards = env.step(u)
             mpc_agent.on_env_step(env, episode, timestep)
-            total_reward += rewards['cost_fuel']
-
+            returns[episode] += r
+            total_tracking_cost += rewards['cost_tracking']
+            total_fuel_cost += rewards['cost_fuel']
+            total_reward += rewards['cost_tracking'] + rewards['cost_fuel']
             timestep += 1
             mpc_agent.on_timestep_end(env, episode, timestep)
 
@@ -656,15 +770,19 @@ class DqnAgent():
 
 
                     # Check if gear choice is out of range，if so, use gear choice of last time step, give large penalty
+                    count = 0
                     for i in range(self.pred_horizon):
                         if gear_choice_explicit[i] < 1:
                             gear_choice_explicit[i] = 1
                             penalty += 100
                             gear_violation_count += 1
+                            count += 1
                         elif gear_choice_explicit[i] > 6:
                             gear_choice_explicit[i] = 6
                             penalty += 100
                             gear_violation_count += 1
+                            count += 1
+                    gear_violation.append(count)
 
                     gear_choice_binary = np.zeros((self.n_gears, self.pred_horizon))
                     for i in range(self.pred_horizon):
@@ -679,8 +797,10 @@ class DqnAgent():
                     u, info = mpc_agent.get_control(state, try_again_if_infeasible=False)
 
                     #check if mpc is infeasible, if so, use shifted prediction and action from last time step 
+                    count = 0
                     if info["cost"] == float('inf'):
                         infeasibility_count += 1
+                        count = 1
                         penalty += 500
                         gear_choice_explicit = np.concatenate((last_gear_choice_explicit[1:], last_gear_choice_explicit[[-1]]),0)
                         gear_choice_binary = np.zeros((self.n_gears, self.pred_horizon))
@@ -719,7 +839,9 @@ class DqnAgent():
 
                             if info['cost'] == float('inf'):
                                 raise RuntimeError("Backup gear solution was still infeasible, reconsider theory. Oh no.")    
-                                    
+
+                    infeasibility.append(count)
+                                   
                     pred_u_next = info['u']
                     pred_x_next = info['x']
                     # transform the predicition to tensor
@@ -755,62 +877,111 @@ class DqnAgent():
                 mpc_agent.on_env_step(env, episode, timestep)
 
                 returns[episode] += r
-                fuel_cost = torch.tensor([rewards['cost_fuel']], device=self.device) #only care about fuel
-                tracking_cost = torch.tensor([rewards['cost_tracking']], device=self.device)
-                penalty = torch.tensor([penalty], device=self.device)
-                total_reward += float(fuel_cost) + float(penalty) + float(tracking_cost)
-
+                fuel_cost = rewards['cost_fuel'] #only care about fuel
+                tracking_cost = rewards['cost_tracking']
+  
+                total_reward += fuel_cost + penalty + tracking_cost
+                
+                total_tracking_cost += tracking_cost
+                total_fuel_cost += fuel_cost
                 timestep += 1
                 mpc_agent.on_timestep_end(env, episode, timestep)
-
+                
+            performance += 0.0025 * total_tracking_cost + total_fuel_cost
+            end_time = time.time()
+            total_runtime += end_time - start_time
+            print(f"Episode {episode + 1}, performance: {performance}, total cost: {total_reward}, runtime: {total_runtime}, gear violations: {gear_violation_count}, infeasibilities: {infeasibility_count}")
             mpc_agent.on_episode_end(env, episode, returns[episode])
 
+            if num_episodes > 1:
+                wandb.log({"total_cost": total_reward,
+                            "gear_violations": gear_violation_count, 
+                            "infeasibilities": infeasibility_count})
+            
             self.episode_rewards.append(total_reward)
             self.gear_violations.append(gear_violation_count)
             self.infeasibilities.append(infeasibility_count)
-            # self.plot_durations()
-            self.plot_rewards()
-            self.plot_gear_violation()
-            self.plot_infeasibility()
+            self.tracking_costs.append(total_tracking_cost)
+            self.fuel_costs.append(total_fuel_cost)
+            self.performance.append(performance)
+            self.runtimes.append(total_runtime)
 
-            if len(env.observations) > 0:
-                X = env.observations[episode].squeeze()
-                U = env.actions[episode].squeeze()
-                R = env.rewards[episode]  # grabs only total cost
-            else:
-                X = np.squeeze(env.ep_observations)
-                U = np.squeeze(env.ep_actions)
-                R = np.squeeze(env.ep_rewards)
 
-            # now grab individual costs
-            r_tracking = env.unwrapped.cost_tracking_list
-            r_fuel = env.unwrapped.cost_fuel_list
-            acc = env.unwrapped.acc_list
-            r_tracking = np.array(r_tracking).squeeze()
-            r_fuel = np.array(r_fuel).squeeze()
-            acc = np.array(acc).squeeze()
+            if num_episodes > 1 and episode == num_episodes - 1:
+                self.plot_rewards()
+                self.plot_gear_violation()
+                self.plot_infeasibility()
 
-            # print(f"Return = {sum(R.squeeze())}")
-            # print(f"Violations = {env.unwrapped.viol_counter}")
-            # print(f"Run_times_sum: {sum(agent.solve_times)}")
-            # print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
 
-            plot_fleet(
-                1,
-                X,
-                acc,
-                U,
-                R,
-                r_tracking,
-                r_fuel,
-                mpc_agent.leader_x,
-                violations=env.unwrapped.viol_counter[0],
-                )
-            # plt.show()    
+            if plot and num_episodes == 1:
+                if len(env.observations) > 0:
+                    X = env.observations[episode].squeeze()
+                    U = env.actions[episode].squeeze()
+                    R = env.rewards[episode]  # grabs only total cost
+                else:
+                    X = np.squeeze(env.ep_observations)
+                    U = np.squeeze(env.ep_actions)
+                    R = np.squeeze(env.ep_rewards)
 
+                # now grab individual costs
+                r_tracking = env.unwrapped.cost_tracking_list
+                r_fuel = env.unwrapped.cost_fuel_list
+                acc = env.unwrapped.acc_list
+                r_tracking = np.array(r_tracking).squeeze()
+                r_fuel = np.array(r_fuel).squeeze()
+                acc = np.array(acc).squeeze()
+
+                plot_fleet(
+                    1,
+                    X,
+                    U,
+                    R,
+                    r_tracking,
+                    r_fuel,
+                    mpc_agent.leader_x,
+                    violations=env.unwrapped.viol_counter[0],
+                    )
+                
+                # plot the gear violations and infeasibilities
+                plt.figure()
+                plt.plot(gear_violation)
+                plt.xlabel('Time step')
+                plt.ylabel('Gear Violations')
+
+                plt.figure()
+                plt.plot(infeasibility)
+                plt.xlabel('Time step')
+                plt.ylabel('Infeasibilities')
+
+                plt.show()    
+            
+                # dump the data
+                evaluate_data = {}
+                evaluate_data['states'] = X
+                evaluate_data['actions'] = U
+                evaluate_data['rewards'] = R
+                evaluate_data['episode_rewards'] = self.episode_rewards
+                evaluate_data['gear_violations'] = self.gear_violations
+                evaluate_data['infeasibilities'] = self.infeasibilities
+                evaluate_data['tracking_costs'] = r_tracking
+                evaluate_data['fuel_costs'] = r_fuel
+
+                if save:
+                    with open('evaluate_data.pkl', 'wb') as f:
+                        pickle.dump(evaluate_data, f)
+            
         mpc_agent.on_validation_end(env, returns)
 
-        print('Complete')
+        print("Complete")
+        print(f"Average performance: {np.mean(self.performance)}")
+        print(f"Average total cost: {np.mean(self.episode_rewards)}")
+        print(f"Average tracking costs: {np.mean(self.tracking_costs)}")
+        print(f"Average fuel costs: {np.mean(self.fuel_costs)}")
+        print(f"Average gear violations: {np.mean(self.gear_violations)}")
+        print(f"Average infeasibilities: {np.mean(self.infeasibilities)}")
+        print(f"Average runtime: {np.mean(self.runtimes)}")
+
+ 
         # env.render()
         env.close()
         # plt.ioff()
@@ -829,7 +1000,7 @@ def simulate(
     mode: str = "train",
 ):
     n = sim.n  # num cars
-    N = sim.N  # controller horizon
+    N = sim.N_dqn  # controller horizon
     ep_len = sim.ep_len  # length of episode (sim len)
     ts = Params.ts
     masses = sim.masses
@@ -859,7 +1030,7 @@ def simulate(
             max_episode_steps=ep_len,
         )
     )
-    rlagent = DqnAgent(256, 0.9, 0.999, 0.00, 600000, 0.001, 0.001, "cuda")
+    rlagent = DqnAgent(128, 0.9, 0.999, 0, 980000, 0.001, 0.001, "cuda")
 
     mpc = MpcGearCent(
         n,
@@ -871,31 +1042,17 @@ def simulate(
         real_vehicle_as_reference=sim.real_vehicle_as_reference,
         quadratic_cost=sim.quadratic_cost,
     )
-    # mpc = RlMpcCent(
-    #     n,
-    #     N,
-    #     platoon,
-    #     systems,
-    #     spacing_policy=spacing_policy,
-    #     leader_index=leader_index,
-    #     thread_limit=thread_limit,
-    #     real_vehicle_as_reference=sim.real_vehicle_as_reference,
-    #     quadratic_cost=sim.quadratic_cost,
-    # )
 
-    mpcagent = RlMpcAgent(mpc, ep_len, N, leader_x)
+
+    mpcagent = TrackingCentralizedAgent(mpc, ep_len, N, leader_x)
 
     # train or evaluate
     if mode == "train":
-        rlagent.train(env, mpcagent, 50000)
-        rlagent.save_model('trained_dqn_agent_new.pth')
+        rlagent.train(env, mpcagent, 70000, seed = None, save = True)
     elif mode == "evaluate":
-        rlagent.load_model('trained_dqn_agent_new.pth')
-        returns = rlagent.evaluate(env, mpcagent, 10)
-        print(f"Average return: {np.mean(returns)}")
-
+        rlagent.load_model('trained_dqn_agent_full_complexity_fuel_param_1_hidden_size_64.pth')
+        rlagent.evaluate(env, mpcagent, num_episodes = 100, seed = Sim.seed, save = save, plot = plot)
     
-
-if __name__ == "__main__":
-    simulate(Sim(), save=False, leader_index=0, mode="evaluate")
- 
+if __name__ == "__main__": 
+    simulate(Sim(), save=True, plot = True, leader_index=0, mode="evaluate")
+    

@@ -95,3 +95,82 @@ class VolatileTrajectory(LeaderTrajectory):
         for k in range(70, self.trajectory_len - 1):
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         return x
+    
+class RandomVolatileTrajectory(LeaderTrajectory):
+    """A leader trajectory for a volatile human driven vehicle, with random acceleration changes."""
+    
+    def __init__(self, p: float, trajectory_len: int, ts: float, seed: int) -> None:
+        self.p0 = p
+        self.seed = seed
+        super().__init__(trajectory_len, ts)
+
+    def get_leader_trajectory(self) -> np.ndarray:      
+        np.random.seed(self.seed)
+        x = np.zeros((2, self.trajectory_len))
+        v = 20 + np.random.uniform(-5, 5)
+        x[:, [0]] = np.array([[self.p0], [v]])
+
+
+        # 随机化速度变化的时间点和斜率
+        change_points = np.sort(np.random.randint(-5, 5, size = 4))
+        slopes = np.random.uniform(-0.6, 0.6, size = 3)  # 随机斜率范围 [-5, 5]
+    
+        # 初始速度
+
+        # current_slope = 0
+    
+        # for k in range(self.trajectory_len - 1):
+        #     if k in change_points:
+        #         current_slope = slopes[np.where(change_points == k)[0][0]]
+        #     v = max(10, v + current_slope)
+        #     x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(20 + change_points[0]):
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(20 + change_points[0], 35 + change_points[1]):
+            v = max(min(35, v + slopes[0]), 5)
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(35 + change_points[1], 50 + change_points[2]):
+            v = max(min(35, v + slopes[1]),5)
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(50 + change_points[2], 70 + change_points[3]):
+            v = max(min(35, v + slopes[2]),5)
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(70 + change_points[3], self.trajectory_len - 1):
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+
+        return x
+    
+    def get_seeded_leader_trajectory(self, seed: int) -> np.ndarray:
+        np.random.seed(seed)
+        x = np.zeros((2, self.trajectory_len))
+        v = 15 + np.random.uniform(-5, 5)
+        x[:, [0]] = np.array([[self.p0], [v]])
+
+
+        # 随机化速度变化的时间点和斜率
+        change_points = np.sort(np.random.randint(-5, 5, size = 4))
+        slopes = np.random.uniform(-0.6, 0.6, size = 3)  # 随机斜率范围 [-5, 5]
+    
+        # 初始速度
+
+        # current_slope = 0
+    
+        # for k in range(self.trajectory_len - 1):
+        #     if k in change_points:
+        #         current_slope = slopes[np.where(change_points == k)[0][0]]
+        #     v = max(10, v + current_slope)
+        #     x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(20 + change_points[0]):
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(20 + change_points[0], 35 + change_points[1]):
+            v = max(min(35, v + slopes[0]), 5)
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(35 + change_points[1], 50 + change_points[2]):
+            v = max(min(35, v + slopes[1]),5)
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(50 + change_points[2], 70 + change_points[3]):
+            v = max(min(35, v + slopes[2]),5)
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        for k in range(70 + change_points[3], self.trajectory_len - 1):
+            x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
+        return x

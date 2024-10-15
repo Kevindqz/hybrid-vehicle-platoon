@@ -5,10 +5,12 @@ import numpy as np
 from misc.leader_trajectory import (
     ConstantVelocityLeaderTrajectory,
     StopAndGoLeaderTrajectory,
+    VolatileTrajectory,
+    RandomVolatileTrajectory
 )
 from misc.spacing_policy import ConstantSpacingPolicy, ConstantTimePolicy
 
-np.random.seed(2)
+np.random.seed(None)
 
 
 class Params:
@@ -32,15 +34,20 @@ class Sim:
     start_from_platoon: bool = False
     quadratic_cost: bool = True
     fuel_penalize: float = 0
+    seed = 4
     n = 1
-    N = 5
-    ep_len = N if open_loop else 80
+    N_dqn = 5
+    N_mpc = 2
+    ep_len = N_dqn if open_loop else 60
     spacing_policy = ConstantSpacingPolicy(50)
-    leader_trajectory = ConstantVelocityLeaderTrajectory(
-        p=3000, v=20, trajectory_len=ep_len + 50, ts=Params.ts
+    # leader_trajectory = ConstantVelocityLeaderTrajectory(
+    #     p=3000, v=20, trajectory_len=ep_len + 50, ts=Params.ts
+    # )
+    leader_trajectory = RandomVolatileTrajectory(
+        p=3000, trajectory_len=ep_len + 50, ts=Params.ts, seed=None
     )
     masses = None
-    id = f"default_n_{n}_N_{N}"
+    id = f"default_n_{n}_N_{N_dqn}"
 
 
 class Sim_n_task_1(Sim):

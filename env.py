@@ -77,7 +77,8 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
     ) -> tuple[npt.NDArray[np.floating], dict[str, Any]]:
         """Resets the state of the platoon."""
         super().reset(seed=seed, options=options)
-        self.leader_x = self.leader_trajectory.get_leader_trajectory()
+        # self.leader_x = self.leader_trajectory.get_leader_trajectory()
+        self.leader_x = self.leader_trajectory.get_seeded_leader_trajectory(seed)
         self.x = np.tile(np.array([[0], [0]]), (self.n, 1))
 
         # create lists to store fuel and tracking costs seperately
@@ -86,11 +87,16 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         self.acc_list: list[float] = []
         np.random.seed(seed)
         # create once 100 random starting states
-        starting_velocities = [
-            30 * np.random.random() + 5 for i in range(100)
-        ]  # starting velocities between 5-35 ms-1
+        # starting_velocities = [
+        #     30 * np.random.random() + 5 for i in range(100)
+        # ]  
+        starting_velocities = [20 * np.random.random() + 5 for i in range(100)]
+        # # starting velocities between 5-35 ms-1
         # starting positions between 0-1000 meters, with some forced spacing
-        front_pos = 3000.0
+        # front_pos = 3000.0
+        # the front_pos is random around 3000, can be higher or lower
+        front_pos = 3000.0 - 100 + 200 * np.random.random()
+
         spread = 100
         spacing = 60
         starting_positions = [front_pos]
@@ -119,7 +125,8 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
 
         self.step_counter = 0
         self.viol_counter.append(np.zeros(self.ep_len))
-        return self.x, {}
+        info = {"leader_trajectory": self.leader_x}
+        return self.x, info
 
     def quad_cost(self, x: np.ndarray, Q: np.ndarray):
         """Returns x'Qx"""
@@ -218,7 +225,7 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
                 cost_fuel += sum(poly_b + poly_c * acc)
 
 
-            total_cost = cost_fuel + cost_tracking
+            total_cost = cost_fuel + 0.0025 * cost_tracking
         # check for constraint violations
         if (
             self.real_vehicle_as_reference
@@ -274,3 +281,6 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
     def get_previous_state(self):
         """Returns state of platoon at previous time step. Uses current state for first time-step."""
         return self.previous_state if self.previous_state is not None else self.x
+
+    def set_leader_x(self, leader_x: np.ndarray):
+        self.leader_x = leader_x

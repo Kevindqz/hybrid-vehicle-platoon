@@ -7,7 +7,7 @@ plt.style.use("bmh")
 nx_l = 2
 
 
-def plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_state, violations=None):
+def plot_fleet(n, X, U, R, r_tracking, r_fuel, leader_state, violations=None):
     # fix in one plot
     _, axs = plt.subplots(2, 1, constrained_layout=True, sharex=True)
     axs[0].plot(leader_state[0, :], "--")
@@ -40,14 +40,21 @@ def plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_state, violations=Non
     # axs.set_xlabel(f"time step k")
 
     # plot tracking and fuel cost individually
-    _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
-    axs.plot(r_tracking)
-    axs.set_ylabel("tracking cost")
-    axs.set_xlabel(f"time step k")
+    # _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    # axs.plot(r_tracking)
+    # axs.set_ylabel("tracking cost")
+    # axs.set_xlabel(f"time step k")
 
+    # _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
+    # axs.plot(r_fuel)
+    # axs.set_ylabel("fuel cost")
+    # axs.set_xlabel(f"time step k")
+
+    # plot aggregated tracking cost
     _, axs = plt.subplots(1, 1, constrained_layout=True, sharex=True)
-    axs.plot(r_fuel)
-    axs.set_ylabel("fuel cost")
+    total_tracking_costs = [sum(r_tracking[: i + 1]) for i in range(len(r_tracking))]
+    axs.plot(total_tracking_costs)
+    axs.set_ylabel("total tracking cost")
     axs.set_xlabel(f"time step k")
 
     # plot aggregated fuel consumption cost
@@ -57,4 +64,3 @@ def plot_fleet(n, X, acc, U, R, r_tracking, r_fuel, leader_state, violations=Non
     axs.set_ylabel("total fuel cost")
     axs.set_xlabel(f"time step k")
 
-    plt.show()

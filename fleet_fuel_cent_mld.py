@@ -1,6 +1,7 @@
 import pickle
 import gurobipy as gp
 from gurobipy import GRB
+from matplotlib import pyplot as plt
 import numpy as np
 from dmpcpwa.agents.mld_agent import MldAgent
 from dmpcpwa.mpc.mpc_mld import MpcMld
@@ -36,11 +37,11 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         thread_limit: int | None = None,
         accel_cnstr_tightening: float = 0.0,
         real_vehicle_as_reference: bool = False,
-        fuel_penalize: float = 0.0,
+        fuel_penalize: float = 1,
     ) -> None:
         self.n = n
         MpcMldCentDecup.__init__(
-            self, systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose=True
+            self, systems, n, N, thread_limit=thread_limit, constrain_first_state=False, verbose= False
         )  # use the MpcMld constructor
         F = block_diag(*[systems[i]["F"] for i in range(n)])
         G = np.vstack([systems[i]["G"] for i in range(n)])
@@ -65,7 +66,7 @@ class MpcGearCent(FuelMpcCent, MpcMldCentDecup, MpcGear):
         quadratic_cost: bool = True,
         accel_cnstr_tightening: float = 0,
         real_vehicle_as_reference: bool = False,
-        fuel_penalize: float = 0.0,
+        fuel_penalize: float = 1,
     ):
         # overriding the method fuelMPCGear because for discrete input model delta don't exist.
         """Set up  cost and constraints for platoon tracking. Penalises the u passed in."""
@@ -328,7 +329,7 @@ def simulate(
     leader_index=0,
 ):
     n = sim.n  # num cars
-    N = sim.N  # controller horizon
+    N = sim.N_mpc  # controller horizon
     ep_len = sim.ep_len  # length of episode (sim len)
     ts = Params.ts
     masses = sim.masses
@@ -403,8 +404,8 @@ def simulate(
     # agent
     agent = TrackingCentralizedAgent(mpc, ep_len, N, leader_x)
     
-    agent.evaluate(env=env, episodes=1, seed=seed, open_loop=sim.open_loop)
-
+    agent.evaluate(env=env, episodes=100, seed=seed, open_loop=sim.open_loop)
+    leader_x = agent.leader_x
     if len(env.observations) > 0:
         X = env.observations[0].squeeze()
         U = env.actions[0].squeeze()
@@ -422,37 +423,30 @@ def simulate(
     r_fuel = np.array(r_fuel).squeeze()
     acc = np.array(acc).squeeze()
 
-    print(f"Return = {sum(R.squeeze())}")
-    print(f"Violations = {env.unwrapped.viol_counter}")
-    print(f"Run_times_sum: {sum(agent.solve_times)}")
-    print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
+    # print(f"Return = {sum(R.squeeze())}")
+    # print(f"Violations = {env.unwrapped.viol_counter}")
+    # print(f"Run_times_sum: {sum(agent.solve_times)}")
+    # print(f"average_bin_vars: {sum(agent.bin_var_counts)/len(agent.bin_var_counts)}")
 
     if plot:
-        plot_fleet(
-            n,
-            X,
-            acc,
-            U,
-            R,
-            r_tracking,
-            r_fuel,
-            leader_x,
-            violations=env.unwrapped.viol_counter[0],
-        )
+        plot_fleet(n, X, U, R, r_tracking, r_fuel, leader_x, violations=env.unwrapped.viol_counter[0])
+        plt.show()
+
+    purefuelmpc_data = {
+    "X": X,
+    "U": U,
+    "R": R,
+    "r_tracking": r_tracking,
+    "r_fuel": r_fuel,
+    }
 
     if save:
         with open(
-            f"cent_{sim.id}_seed_{seed}" + ".pkl",
+            'purefuelmpc_data.pkl',
             "wb",
         ) as file:
-            pickle.dump(X, file)
-            pickle.dump(U, file)
-            pickle.dump(R, file)
-            pickle.dump(agent.solve_times, file)
-            pickle.dump(agent.node_counts, file)
-            pickle.dump(env.unwrapped.viol_counter[0], file)
-            pickle.dump(leader_x, file)
+            pickle.dump(purefuelmpc_data, file)
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=False, seed=3, leader_index=0)
+    simulate(Sim(), save = True, plot = True, seed = Sim.seed, leader_index=0)
