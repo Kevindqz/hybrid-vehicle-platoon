@@ -143,3 +143,7 @@ libpardiso.lib
 pardiso.lic
 tmp_casadi_compiler*.o
 tmp_casadi_compiler*.so
+
+*.png
+*.pth
+*.pkl
