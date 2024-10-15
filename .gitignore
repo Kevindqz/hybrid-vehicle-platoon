@@ -147,3 +147,6 @@ tmp_casadi_compiler*.so
 *.png
 *.pth
 *.pkl
+
+# Ignore all wandb directory
+wandb/
