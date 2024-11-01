@@ -24,27 +24,39 @@ class Params:
     a_dec = -2  # deceleration limit
     d_safe = 25
 
+    coefficients_b = [
+        0.1569,
+        2.450 * 10 ** (-2),
+        -7.415 * 10 ** (-4),
+        5.975 * 10 ** (-5),
+    ]
+
+    coefficients_c = [
+        0.0724, 
+        9.681 * 10 ** (-2), 
+        1.075 * 10 ** (-3),
+    ]    
 
 class Sim:
     open_loop = False
     real_vehicle_as_reference = False
     vehicle_model_type: Literal[
         "nonlinear", "pwa_friction", "pwa_gear"
-    ] = "pwa_friction"  # MLD form (model II) is pwa_friction
+    ] = "pwa_gear"  # MLD form (model II) is pwa_friction
     start_from_platoon: bool = False
     quadratic_cost: bool = True
-    fuel_penalize: float = 0
+    fuel_penalize: float = 2
     seed = 4
     n = 1
     N_dqn = 5
-    N_mpc = 2
+    N_mpc = 5
     ep_len = N_dqn if open_loop else 60
     spacing_policy = ConstantSpacingPolicy(50)
     # leader_trajectory = ConstantVelocityLeaderTrajectory(
     #     p=3000, v=20, trajectory_len=ep_len + 50, ts=Params.ts
     # )
     leader_trajectory = RandomVolatileTrajectory(
-        p=3000, trajectory_len=ep_len + 50, ts=Params.ts, seed=None
+        p=3000, trajectory_len= 80, ts=Params.ts, seed=None
     )
     masses = None
     id = f"default_n_{n}_N_{N_dqn}"

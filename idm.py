@@ -26,27 +26,38 @@ class IdmAgent:
         self.epsillon = 4
         self.d_des = 1
         self.platoon = platoon
-        self.s0 = 0  # Minimum headway distance
-        self.T = 0  # Safe time headway
-        self.b = 4  # Comfortable deceleration
+        self.s0 = 2  # Minimum headway distance
+        self.T = 1.5  # Safe time headway
+        self.b = 3  # Comfortable deceleration
+
+        # PID 控制器参数
+        self.kp = 1.0
+        self.ki = 0.1
+        self.kd = 0.01
+        self.integral = 0.0
+        self.previous_error = 0.0
 
     def get_control(self, state, timestep, platoon):
-        # Intelligent Driver Model
+        # 获取当前状态和期望状态
         v_des = self.leader_x[1, timestep]
         v = state[1]
         d = self.leader_x[0, timestep] - state[0]
-        # print(d)
-        delta_v = self.leader_x[1, timestep] - v  # Speed difference with the lead vehicle
+        delta_v = v - self.leader_x[1, timestep]  # 与前车的速度差
 
-        # Calculate desired headway distance
-        s_star = self.s0 + v * self.T - (v * delta_v) / (2 * np.sqrt(self.acc_max * self.b))
+        # 计算期望车距
+        s_star = self.s0 + v * self.T + (v * delta_v) / (2 * np.sqrt(self.acc_max * self.b))
 
+        # 计算跟随误差
         follow_error = d - s_star
         print(follow_error)
-        # Calculate desired acceleration
-        acc_des = self.acc_max * (1 - (v / v_des) ** self.epsillon - (s_star / d) ** 2)
 
-        # Get vehicle information
+        # PID 控制器计算
+        self.integral += follow_error
+        derivative = follow_error - self.previous_error
+        acc_des = self.kp * follow_error + self.ki * self.integral + self.kd * derivative
+        self.previous_error = follow_error
+
+        # 获取车辆信息
         vehicles = platoon.get_vehicles()
         gear = vehicles[0].get_gear_from_velocity(v.item())
         traction_force = platoon.get_traction_from_vehicle_gear(0, gear)
@@ -54,7 +65,7 @@ class IdmAgent:
         c_fric = vehicles[0].c_fric
         mu = vehicles[0].mu
 
-        # Calculate control input
+        # 计算控制输入
         u = (m * acc_des + c_fric * v ** 2 + mu * m * 9.8) / traction_force
         u = np.clip(u, -1, 1)
         action = np.array([[u.item()], [gear]])
@@ -195,4 +206,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=True, plot = True, num_episode = 1 , seed= Sim().seed, leader_index=0)
+    simulate(Sim(), save=True, plot = True, num_episode = 1 , seed = Sim.seed, leader_index=0)

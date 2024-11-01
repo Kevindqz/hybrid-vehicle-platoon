@@ -127,13 +127,13 @@ class RandomVolatileTrajectory(LeaderTrajectory):
         for k in range(20 + change_points[0]):
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(20 + change_points[0], 35 + change_points[1]):
-            v = max(min(35, v + slopes[0]), 5)
+            v = max(min(35, v + slopes[0]), 6)
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(35 + change_points[1], 50 + change_points[2]):
-            v = max(min(35, v + slopes[1]),5)
+            v = max(min(35, v + slopes[1]),6)
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(50 + change_points[2], 70 + change_points[3]):
-            v = max(min(35, v + slopes[2]),5)
+            v = max(min(35, v + slopes[2]),6)
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(70 + change_points[3], self.trajectory_len - 1):
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
@@ -163,13 +163,13 @@ class RandomVolatileTrajectory(LeaderTrajectory):
         for k in range(20 + change_points[0]):
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(20 + change_points[0], 35 + change_points[1]):
-            v = max(min(35, v + slopes[0]), 5)
+            v = max(min(35, v + slopes[0]), 6)
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(35 + change_points[1], 50 + change_points[2]):
-            v = max(min(35, v + slopes[1]),5)
+            v = max(min(35, v + slopes[1]),6)
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(50 + change_points[2], 70 + change_points[3]):
-            v = max(min(35, v + slopes[2]),5)
+            v = max(min(35, v + slopes[2]),6)
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])
         for k in range(70 + change_points[3], self.trajectory_len - 1):
             x[:, [k + 1]] = np.array([[x[0, k] + self.ts * v], [v]])

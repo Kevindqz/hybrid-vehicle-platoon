@@ -89,7 +89,7 @@ class DqnAgent():
         self.n_hidden = 64
         self.n_actions = 3
         self.n_gears = 6
-        self.pred_horizon = 5
+        self.pred_horizon = Sim.N_dqn
         self.ts = Params.ts
         self.policy_net = DRQN(self.n_states, self.n_hidden, self.n_actions, self.n_layers).to(self.device)
         self.target_net = DRQN(self.n_states, self.n_hidden, self.n_actions, self.n_layers).to(self.device)
@@ -628,7 +628,7 @@ class DqnAgent():
         env.close()
 
         if save:
-            self.save_model('trained_dqn_agent_full_complexity_best_setup.pth')
+            self.save_model('trained_dqn_agent_full_complexity_retrain_N_5.pth')
 
         # Plot the results and save the figures
         self.plot_rewards()
@@ -1030,7 +1030,7 @@ def simulate(
             max_episode_steps=ep_len,
         )
     )
-    rlagent = DqnAgent(128, 0.9, 0.999, 0, 980000, 0.001, 0.001, "cuda")
+    rlagent = DqnAgent(128, 0.9, 0.999, 0, 700000, 0.001, 0.001, "cuda")
 
     mpc = MpcGearCent(
         n,
@@ -1048,9 +1048,10 @@ def simulate(
 
     # train or evaluate
     if mode == "train":
-        rlagent.train(env, mpcagent, 70000, seed = None, save = True)
+        rlagent.train(env, mpcagent, 50000, seed = None, save = True)
     elif mode == "evaluate":
         rlagent.load_model('trained_dqn_agent_full_complexity_fuel_param_1_hidden_size_64.pth')
+        # rlagent.load_model('trained_dqn_agent_full_complexity_fuel_param_1_lstm.pth')
         rlagent.evaluate(env, mpcagent, num_episodes = 100, seed = Sim.seed, save = save, plot = plot)
     
 if __name__ == "__main__": 

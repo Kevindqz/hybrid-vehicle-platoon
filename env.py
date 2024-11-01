@@ -95,8 +95,8 @@ class PlatoonEnv(gym.Env[npt.NDArray[np.floating], npt.NDArray[np.floating]]):
         # starting positions between 0-1000 meters, with some forced spacing
         # front_pos = 3000.0
         # the front_pos is random around 3000, can be higher or lower
+        # front_pos = 3000.0 - 100 + 200 * np.random.random()
         front_pos = 3000.0 - 100 + 200 * np.random.random()
-
         spread = 100
         spacing = 60
         starting_positions = [front_pos]

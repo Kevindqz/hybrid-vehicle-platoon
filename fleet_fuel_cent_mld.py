@@ -1,4 +1,5 @@
 import pickle
+from typing import Any
 import gurobipy as gp
 from gurobipy import GRB
 from matplotlib import pyplot as plt
@@ -318,6 +319,85 @@ class TrackingCentralizedAgent(MldAgent):
     def on_episode_start(self, env: Env, episode: int, state) -> None:
         self.mpc.set_leader_traj(self.leader_x[:, 0 : self.N + 1])
         return super().on_episode_start(env, episode, state)
+    
+    def evaluate(
+        self,
+        env: Env,
+        episodes: int,
+        deterministic: bool = True,
+        seed: int = None,
+        raises: bool = True,
+        env_reset_options: dict[str, Any] = None,
+        open_loop: bool = False,
+    ):
+        """Evaluates the agent in a given environment. Overriding the function of Agent
+        to use the mld_mpc instead."""
+        returns = np.zeros(episodes)
+        self.on_validation_start(env)
+        seeds = map(int, np.random.SeedSequence(seed).generate_state(episodes))
+        tracking_cost_list = []
+        fuel_cost_list = []
+        performance_list = []
+        runtimes = []
+        for episode, current_seed in zip(range(episodes), seeds):
+            total_tracking_cost = 0
+            total_fuel_cost = 0
+            performance = 0
+            total_solver_time = 0
+            self.reset(current_seed)
+            state, info = env.reset(seed=current_seed, options=env_reset_options)
+            # env.set_leader_x(self.leader_x)
+            self.leader_x = info["leader_trajectory"]
+            # state, _ = env.reset(seed = seed, options=env_reset_options)
+            truncated, terminated, timestep = False, False, 0
+            self.on_episode_start(env, episode, state)
+
+            if open_loop:
+                _, info = self.get_control(state)
+                actions = info["u"]
+                counter = 0
+
+            while not (truncated or terminated):
+                # changed origonal agents evaluate here to use the mld mpc
+                if not open_loop:
+                    action, _ = self.get_control(state)
+                else:
+                    if counter > actions.shape[1]:
+                        raise RuntimeError(
+                            f"Open loop actions of length {actions.shape[1]} where not enough for episode."
+                        )
+                    action = actions[:, [counter]]
+                    counter += 1
+
+                state, r, truncated, terminated, info = env.step(action)
+                self.on_env_step(env, episode, timestep)
+                total_tracking_cost += info["cost_tracking"]
+                total_fuel_cost += info["cost_fuel"]
+                total_solver_time += self.run_time
+                performance += info["cost_fuel"] + 0.0025 * info["cost_tracking"]
+                returns[episode] += r
+
+                timestep += 1
+                self.on_timestep_end(env, episode, timestep)
+
+            self.on_episode_end(env, episode, returns[episode])
+            # get runtime
+            runtimes.append(total_solver_time) 
+            tracking_cost_list.append(total_tracking_cost)
+            fuel_cost_list.append(total_fuel_cost)
+            performance_list.append(performance)
+            print(f"Episode {episode}, performance: {performance}, tracking cost: {total_tracking_cost}, fuel cost: {total_fuel_cost}, runtime: {total_solver_time}")
+
+        self.on_validation_end(env, returns)
+
+        average_tracking_cost = np.mean(tracking_cost_list)
+        average_fuel_cost = np.mean(fuel_cost_list)
+        average_performance = np.mean(performance_list)
+        print(f"Average performance: {average_performance}")
+        print(f"Average tracking cost: {average_tracking_cost}")
+        print(f"Average fuel cost: {average_fuel_cost}")
+        print(f"Average runtime: {np.mean(runtimes)}")
+        return returns, average_tracking_cost, average_fuel_cost
 
 
 def simulate(
