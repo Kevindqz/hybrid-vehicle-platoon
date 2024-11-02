@@ -223,4 +223,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=False, plot = True, n_episodes = 100, n_fuel_params = 10, seed=Sim.seed, leader_index=0)
+    simulate(Sim(), save=False, plot = False, n_episodes = 100, n_fuel_params = 10, seed=Sim.seed, leader_index=0)
