@@ -23,15 +23,8 @@ import matplotlib.pyplot as plt
 import time
 import logging
 
-# empty the output.log file
-with open("output.log", "w"):
-    pass
 
-# set up logging
-logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[
-    logging.FileHandler("output.log"),
-    logging.StreamHandler()
-])
+
 
 np.random.seed(2)
 
@@ -163,6 +156,14 @@ def simulate(
             max_episode_steps=ep_len,
         )
     )
+    # set up logging
+    # empty the output.log file
+    with open(f'output_horizon_{N}.log', "w"):
+        pass
+    logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[
+        logging.FileHandler(f'output_horizon_{N}.log'),
+        logging.StreamHandler()
+    ])
 
     # # mpc = SolverTimeRecorder(MpcMldCentNew(N, systems[0]))
     # mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = sim.fuel_penalize))

@@ -21,43 +21,62 @@ import numpy as np
 
 class IdmAgent:
     def __init__(self, leader_x, platoon) -> None:
-        self.acc_max = 4
+        self.acc_max = 2.5
         self.leader_x = leader_x
         self.epsillon = 4
         self.d_des = 1
         self.platoon = platoon
         self.s0 = 2  # Minimum headway distance
         self.T = 1.5  # Safe time headway
-        self.b = 3  # Comfortable deceleration
+        self.b = 2  # Comfortable deceleration
 
-        # PID 控制器参数
-        self.kp = 1.0
-        self.ki = 0.1
-        self.kd = 0.01
-        self.integral = 0.0
-        self.previous_error = 0.0
+        # PID controller parameters for position
+        self.kp_pos = 0.05
+        self.ki_pos = 0.01
+        self.kd_pos = 0.0
+        self.integral_pos = 0.0
+        self.previous_error_pos = 0.0
+
+        # PID controller parameters for velocity
+        self.kp_vel = 0.7
+        self.ki_vel = 0.1
+        self.kd_vel = 0.00
+        self.integral_vel = 0.0
+        self.previous_error_vel = 0.0
 
     def get_control(self, state, timestep, platoon):
-        # 获取当前状态和期望状态
+        # Get current state and desired state
         v_des = self.leader_x[1, timestep]
         v = state[1]
         d = self.leader_x[0, timestep] - state[0]
-        delta_v = v - self.leader_x[1, timestep]  # 与前车的速度差
+        delta_v = v - self.leader_x[1, timestep]  # Speed difference with the lead vehicle
 
-        # 计算期望车距
+        # Calculate desired headway distance
         s_star = self.s0 + v * self.T + (v * delta_v) / (2 * np.sqrt(self.acc_max * self.b))
 
-        # 计算跟随误差
-        follow_error = d - s_star
-        print(follow_error)
+        # Calculate position error
+        follow_error = d
 
-        # PID 控制器计算
-        self.integral += follow_error
-        derivative = follow_error - self.previous_error
-        acc_des = self.kp * follow_error + self.ki * self.integral + self.kd * derivative
-        self.previous_error = follow_error
 
-        # 获取车辆信息
+        # Position PID controller calculation
+        self.integral_pos += follow_error
+        derivative_pos = follow_error - self.previous_error_pos
+        acc_des_pos = self.kp_pos * follow_error + self.ki_pos * self.integral_pos + self.kd_pos * derivative_pos
+        self.previous_error_pos = follow_error
+
+        # Calculate speed error
+        speed_error = v_des - v
+
+        # Velocity PID controller calculation
+        self.integral_vel += speed_error
+        derivative_vel = speed_error - self.previous_error_vel
+        acc_des_vel = self.kp_vel * speed_error + self.ki_vel * self.integral_vel + self.kd_vel * derivative_vel
+        self.previous_error_vel = speed_error
+
+        # Combine the outputs of both PID controllers
+        acc_des = max(min(self.acc_max, 0.55 * acc_des_pos + 0.45 * acc_des_vel), -2)
+
+        # Get vehicle information
         vehicles = platoon.get_vehicles()
         gear = vehicles[0].get_gear_from_velocity(v.item())
         traction_force = platoon.get_traction_from_vehicle_gear(0, gear)
@@ -65,7 +84,7 @@ class IdmAgent:
         c_fric = vehicles[0].c_fric
         mu = vehicles[0].mu
 
-        # 计算控制输入
+        # Calculate control input
         u = (m * acc_des + c_fric * v ** 2 + mu * m * 9.8) / traction_force
         u = np.clip(u, -1, 1)
         action = np.array([[u.item()], [gear]])
@@ -75,6 +94,7 @@ class IdmAgent:
     def evaluate(self, env: Env, num_episode: int = 1, seed: int = None):
         tracking_cost_list = []
         fuel_cost_list = []
+        performance_list = []
         total_reward = 0
         seeds = map(int, np.random.SeedSequence(seed).generate_state(num_episode))
 
@@ -93,7 +113,8 @@ class IdmAgent:
                 episode_reward += reward
                 timestep += 1
             total_reward += episode_reward
-
+            performance = total_fuel_cost + 0.0025 * total_tracking_cost
+            performance_list.append(performance)
             tracking_cost_list.append(total_tracking_cost)
             fuel_cost_list.append(total_fuel_cost)
             print(f"Episode {episode}, tracking cost: {total_tracking_cost}, fuel cost: {total_fuel_cost}")
@@ -102,6 +123,7 @@ class IdmAgent:
         average_fuel_cost = np.mean(fuel_cost_list)
         print(f"Average tracking cost: {average_tracking_cost}")
         print(f"Average fuel cost: {average_fuel_cost}")
+        print(f"Average performance: {np.mean(performance_list)}")
         return average_reward
 
 def simulate(
@@ -168,6 +190,7 @@ def simulate(
     acc = env.unwrapped.acc_list
     r_tracking = np.array(r_tracking).squeeze()
     r_fuel = np.array(r_fuel).squeeze()
+    print(len(r_fuel))
     acc = np.array(acc).squeeze()
 
     if plot:
@@ -206,4 +229,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=True, plot = True, num_episode = 1 , seed = Sim.seed, leader_index=0)
+    simulate(Sim(), save=True, plot = True, num_episode = 1, seed = Sim.seed, leader_index=0)
