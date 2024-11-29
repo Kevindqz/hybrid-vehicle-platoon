@@ -229,4 +229,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=True, plot = True, num_episode = 1, seed = Sim.seed, leader_index=0)
+    simulate(Sim(), save=True, plot = True, num_episode = 100, seed = Sim.seed, leader_index=0)

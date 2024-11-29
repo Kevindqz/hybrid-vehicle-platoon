@@ -173,7 +173,8 @@ def simulate(
     # agent.evaluate(env=env, episodes = n_episodes, seed=seed, raises=True)
 
     for i in range(n_fuel_params):
-        mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = i + 1))
+        # mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = i + 1))
+        mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = n_fuel_params-i))
         agent = TrackingCentralizedAgentNew(mpc, ep_len, N, leader_x)
         agent.evaluate(env=env, episodes = n_episodes, seed=seed, raises=True)
 
@@ -224,4 +225,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=False, plot = False, n_episodes = 100, n_fuel_params = 10, seed=Sim.seed, leader_index=0)
+    simulate(Sim(), save=False, plot = False, n_episodes = 100, n_fuel_params = 4, seed=Sim.seed, leader_index=0)
