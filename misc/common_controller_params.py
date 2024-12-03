@@ -49,7 +49,7 @@ class Sim:
     seed = 4
     n = 1
     N_dqn = 5
-    N_mpc = 2
+    N_mpc = 5
     ep_len = N_dqn if open_loop else 60
     spacing_policy = ConstantSpacingPolicy(50)
     # leader_trajectory = ConstantVelocityLeaderTrajectory(

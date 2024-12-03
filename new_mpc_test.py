@@ -68,6 +68,7 @@ class TrackingCentralizedAgentNew(Agent):
         performance_list = []
         runtimes = []
         # runtimes = []
+        start_test_time = time.time()
         for episode, current_seed in zip(range(episodes), seeds):
             total_tracking_cost = 0
             total_fuel_cost = 0
@@ -93,7 +94,9 @@ class TrackingCentralizedAgentNew(Agent):
                 returns[episode] += r
                 timestep += 1
                 self.on_timestep_end(env, episode, timestep)
-                
+                end_step_time = time.time()
+                total_test_runtime = end_step_time - start_test_time
+                logging.info("Episode %d, timestep %d, total test runtime: %f", episode, timestep, total_test_runtime)
             end_time = time.time()
             self.on_episode_end(env, episode, returns[episode])
             total_runtime = end_time - start_time
@@ -109,11 +112,16 @@ class TrackingCentralizedAgentNew(Agent):
         average_tracking_cost = np.mean(tracking_cost_list)
         average_fuel_cost = np.mean(fuel_cost_list)
         average_performance = np.mean(performance_list)
+        logging.info("################### TEST RESULT##########################")
+        logging.info("                                        ")
         logging.info("Fuel penalize parameter: %s", self.mpc.fuel_penalize)
-        logging.info("Average performance: %s", average_performance)
-        logging.info("Average tracking cost: %s", average_tracking_cost)
-        logging.info("Average fuel cost: %f", average_fuel_cost)
-        logging.info("Average runtime: %s", average_runtime)
+        logging.info("         Average performance: %s", average_performance)
+        logging.info("         Average tracking cost: %s", average_tracking_cost)
+        logging.info("         Average fuel cost: %f", average_fuel_cost)
+        logging.info("         Average runtime: %s", average_runtime)
+        logging.info("                                        ")
+        logging.info("#########################################################")
+        logging.info("                                        ")
         return returns
     
 def simulate(
@@ -173,8 +181,7 @@ def simulate(
     # agent.evaluate(env=env, episodes = n_episodes, seed=seed, raises=True)
 
     for i in range(n_fuel_params):
-        # mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = i + 1))
-        mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = n_fuel_params-i))
+        mpc = SolverTimeRecorder(FuelMpcCentNew(N, systems[0], fuel_penalize = i + 1))
         agent = TrackingCentralizedAgentNew(mpc, ep_len, N, leader_x)
         agent.evaluate(env=env, episodes = n_episodes, seed=seed, raises=True)
 
@@ -225,4 +232,4 @@ def simulate(
 
 
 if __name__ == "__main__":
-    simulate(Sim(), save=False, plot = False, n_episodes = 100, n_fuel_params = 4, seed=Sim.seed, leader_index=0)
+    simulate(Sim(), save=False, plot = False, n_episodes = 100, n_fuel_params = 10, seed=Sim.seed, leader_index=0)
