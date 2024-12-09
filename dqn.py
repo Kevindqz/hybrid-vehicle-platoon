@@ -907,7 +907,7 @@ class DqnAgent():
             self.runtimes.append(total_runtime)
 
 
-            if num_episodes > 1 and episode == num_episodes - 1:
+            if plot and num_episodes > 1 and episode == num_episodes - 1:
                 self.plot_rewards()
                 self.plot_gear_violation()
                 self.plot_infeasibility()
