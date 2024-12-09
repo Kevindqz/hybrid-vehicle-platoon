@@ -659,19 +659,19 @@ class DqnAgent():
         mpc_agent.on_validation_start(env)
         seeds = map(int, np.random.SeedSequence(seed).generate_state(num_episodes))
 
-        if num_episodes > 1:
-            wandb.init(project="DRQN-MPC-EVAL",
-                config={"architecture": "rnn",
-                        "episodes": num_episodes,
-                        "num_rnn_layers": self.n_layers,
-                        "hidden_size": self.n_hidden,
-                        "learning_rate": self.LEARNING_RATE, 
-                        "gamma": self.GAMMA, 
-                        "batch_size": self.BATCH_SIZE, 
-                        "target_update": self.tau,
-                        "tracking_param": self.tracking_param,
-                        "fuel_param": self.fuel_param,
-                        })
+        # if num_episodes > 1:
+        #     wandb.init(project="DRQN-MPC-EVAL",
+        #         config={"architecture": "rnn",
+        #                 "episodes": num_episodes,
+        #                 "num_rnn_layers": self.n_layers,
+        #                 "hidden_size": self.n_hidden,
+        #                 "learning_rate": self.LEARNING_RATE, 
+        #                 "gamma": self.GAMMA, 
+        #                 "batch_size": self.BATCH_SIZE, 
+        #                 "target_update": self.tau,
+        #                 "tracking_param": self.tracking_param,
+        #                 "fuel_param": self.fuel_param,
+        #                 })
         
         for episode, current_seed in zip(range(num_episodes), seeds):
             start_time = time.time()
@@ -893,10 +893,10 @@ class DqnAgent():
             print(f"Episode {episode + 1}, performance: {performance}, total cost: {total_reward}, runtime: {total_runtime}, gear violations: {gear_violation_count}, infeasibilities: {infeasibility_count}")
             mpc_agent.on_episode_end(env, episode, returns[episode])
 
-            if num_episodes > 1:
-                wandb.log({"total_cost": total_reward,
-                            "gear_violations": gear_violation_count, 
-                            "infeasibilities": infeasibility_count})
+            # if num_episodes > 1:
+            #     wandb.log({"total_cost": total_reward,
+            #                 "gear_violations": gear_violation_count, 
+            #                 "infeasibilities": infeasibility_count})
             
             self.episode_rewards.append(total_reward)
             self.gear_violations.append(gear_violation_count)
