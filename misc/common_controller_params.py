@@ -42,7 +42,7 @@ class Sim:
     real_vehicle_as_reference = False
     vehicle_model_type: Literal[
         "nonlinear", "pwa_friction", "pwa_gear"
-    ] = "pwa_gear"  # MLD form (model II) is pwa_friction
+    ] = "pwa_friction"  # MLD form (model II) is pwa_friction
     start_from_platoon: bool = False
     quadratic_cost: bool = True
     fuel_penalize: float = 2

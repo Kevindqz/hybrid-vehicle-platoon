@@ -1055,5 +1055,5 @@ def simulate(
         rlagent.evaluate(env, mpcagent, num_episodes = 100, seed = Sim.seed, save = save, plot = plot)
     
 if __name__ == "__main__": 
-    simulate(Sim(), save=True, plot = True, leader_index=0, mode="evaluate")
+    simulate(Sim(), save=True, plot = False, leader_index=0, mode="evaluate")
     
